@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: music-postgres
+    hostname: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: track-db
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d track-db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  data-loader:
+    build: .
+    container_name: music-data-loader
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Mount the local CSV directory to /app/transformed in the container
+      - ./transformed:/app/transformed
+
+volumes:
+  postgres-data:

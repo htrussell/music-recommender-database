@@ -1,0 +1,16 @@
+data/*.csv
+transformed/*.csv
+csv/*.csv
+csv/Review excerpts for NLP/
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+.vscode
+.venv/
+__pycache__/
+*.py[cod]
