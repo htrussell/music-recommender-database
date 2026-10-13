@@ -272,6 +272,17 @@ def main() -> None:
                 with csv_context as csv_file:
                     cur.copy_expert(sql=copy_sql, file=csv_file)
 
+            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", ("music_reader",))
+            if cur.fetchone():
+                cur.execute(
+                    """
+                    GRANT SELECT ON TABLE
+                        album, album_scores, artist_genres, artists, genre,
+                        track_artists, track_feel, tracks
+                    TO music_reader
+                    """
+                )
+
     print("\nSuccess! Database is fully populated and relational constraints are active.")
 
 

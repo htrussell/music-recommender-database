@@ -1,4 +1,47 @@
 services:
+  frontend:
+    image: nginx:alpine
+    container_name: music-recommender-web
+    ports:
+      - "8080:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./app.js:/usr/share/nginx/html/app.js:ro
+      - ./styles.css:/usr/share/nginx/html/styles.css:ro
+      - ./backend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - music-network
+    depends_on:
+      ai-api:
+        condition: service_healthy
+
+  ai-api:
+    build:
+      context: ./backend
+    container_name: music-recommender-ai-api
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: lfm2.5-thinking:latest
+      MUSIC_ADMIN_DSN: dbname=airflow user=airflow password=airflow host=postgres port=5432
+      MUSIC_READER_PASSWORD: ${MUSIC_READER_PASSWORD:-music_reader_local_dev}
+    networks:
+      - music-network
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-model:
+        condition: service_completed_successfully
+
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: music-namenode
@@ -196,22 +239,30 @@ services:
     image: ollama/ollama:latest
     container_name: music-ollama
     hostname: ollama
-    ports:
-      - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
     networks:
       - music-network
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      set -e
-      ollama serve &
-      server_pid=$$!
-      until ollama list >/dev/null 2>&1; do
-        sleep 1
-      done
-      ollama pull lfm2.5-thinking:latest
-      wait "$$server_pid"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  ollama-model:
+    image: ollama/ollama:latest
+    command: ["pull", "lfm2.5-thinking:latest"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    restart: "no"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - music-network
+    depends_on:
+      ollama:
+        condition: service_healthy
 
 networks:
   music-network:
