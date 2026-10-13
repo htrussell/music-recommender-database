@@ -28,7 +28,7 @@ because the loader drops and recreates the music tables.
 After setup completes, connect to the populated database with:
 
 ```bash
-docker compose exec postgres psql -U airflow -d airflow
+docker compose exec postgres psql -U airflow -d track-db
 ```
 
 Build and launch the local recommendation demo with:
@@ -54,8 +54,11 @@ can only read the existing music tables; it cannot modify catalog data.
 override the local-development default.
 
 Playlist and taste-profile review/save remain browser-session data. A listener
-profile is not written into the music database. The frontend imports public
-YouTube playlists via the YouTube Data API and reads normalized JSON files.
+profile is not written into the music database. Public YouTube playlist links
+are imported by the local backend using `yt-dlp`; no third-party API key is
+required in the frontend. The AI can match alternate title spellings and
+YouTube title variations against the read-only music catalog. Normalized JSON
+playlist files can also be imported.
 
 Before running it, install Python 3.10+, Docker Desktop with Compose v2, and
 configure Kaggle API credentials either as `KAGGLE_USERNAME` / `KAGGLE_KEY`

@@ -22,7 +22,7 @@ services:
     environment:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: lfm2.5-thinking:latest
-      MUSIC_ADMIN_DSN: dbname=airflow user=airflow password=airflow host=postgres port=5432
+      MUSIC_ADMIN_DSN: dbname=track-db user=airflow password=airflow host=postgres port=5432
       MUSIC_READER_PASSWORD: ${MUSIC_READER_PASSWORD:-music_reader_local_dev}
     networks:
       - music-network
@@ -209,7 +209,7 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: airflow
+      POSTGRES_DB: track-db
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
     volumes:
@@ -217,7 +217,7 @@ services:
     networks:
       - music-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      test: ["CMD-SHELL", "pg_isready -U airflow -d track-db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -231,6 +231,8 @@ services:
       - tools
     volumes:
       - ./transformed:/app/transformed:ro
+    networks:
+      - music-network
     depends_on:
       postgres:
         condition: service_healthy
