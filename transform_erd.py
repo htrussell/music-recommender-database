@@ -369,3 +369,12 @@ assert set(albums['genre_id'].dropna()) <= genre_ids
 assert set(album_scores['album_id']) <= album_ids
 assert set(track_feel['track_id']) <= track_ids
 assert set(track_artists['track_id']) <= track_ids
+# --- Export transformed ERD tables ---
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+for table_name, dataframe in tables.items():
+    output_path = OUTPUT_DIR / f"{table_name}.csv"
+    dataframe.to_csv(output_path, index=False)
+    print(f"Wrote {table_name}: {len(dataframe):,} rows -> {output_path}")
+
+print(f"Exported {len(tables)} ERD tables to {OUTPUT_DIR}")
