@@ -1,1 +1,0 @@
-aider --model openai/qwen3.5:9b --openai-api-base http://localhost:11434/v1 --api-key openai=dummy-key-ollama --no-show-model-warnings
