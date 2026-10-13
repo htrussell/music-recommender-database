@@ -180,6 +180,18 @@ services:
       retries: 5
       start_period: 10s
 
+  data-loader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles:
+      - tools
+    volumes:
+      - ./transformed:/app/transformed:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   ollama:
     image: ollama/ollama:latest
     container_name: music-ollama

@@ -25,6 +25,12 @@ the eight relational CSVs under `transformed/`, starts PostgreSQL with Docker
 Compose, and runs the containerized database loader. It asks before loading
 because the loader drops and recreates the music tables.
 
+After setup completes, connect to the populated database with:
+
+```bash
+docker compose exec postgres psql -U airflow -d airflow
+```
+
 Before running it, install Python 3.10+, Docker Desktop with Compose v2, and
 configure Kaggle API credentials either as `KAGGLE_USERNAME` / `KAGGLE_KEY`
 environment variables or in `~/.kaggle/kaggle.json`. To reuse source CSV files

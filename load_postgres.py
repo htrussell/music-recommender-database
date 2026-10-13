@@ -8,7 +8,7 @@ import psycopg2
 
 # Connect to the Postgres service defined in docker-compose.yml.
 DB_PARAMS = {
-    "dbname": "track-db",
+    "dbname": "airflow",
     "user": "airflow",
     "password": "airflow",
     "host": "postgres",
