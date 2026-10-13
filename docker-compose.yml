@@ -1,34 +1,8 @@
 services:
-<<<<<<< HEAD
   postgres:
     image: postgres:15
     container_name: music-postgres
     hostname: postgres
-=======
-###
-#  postgres:
-#    image: postgres:15
-#    container_name: music-postgres
-#    hostname: postgres
-#    ports:
-#      - "5432:5432"
-#    environment:
-#      POSTGRES_DB: track-db
-#      POSTGRES_USER: airflow
-#      POSTGRES_PASSWORD: airflow
-#    volumes:
-#      - postgres-data:/var/lib/postgresql/data
-#    healthcheck:
-#      test: ["CMD-SHELL", "pg_isready -U airflow -d track-db"]
-#      interval: 5s
-#      timeout: 5s
-#      retries: 5
-
-  namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
-    container_name: music-namenode
-    hostname: namenode
->>>>>>> 9f3de77 (Updated docker-compose.yml)
     ports:
       - "5432:5432"
     environment:
@@ -50,19 +24,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      # Mount the local CSV directory to /app/transformed in the container
       - ./transformed:/app/transformed
 
 volumes:
-<<<<<<< HEAD
   postgres-data:
-=======
-  namenode-data:
-  datanode1-data:
-  datanode2-data:
-  zookeeper-data:
-  zookeeper-logs:
-  kafka-data:
-  postgres-data:
-  ollama-data:
->>>>>>> 9f3de77 (Updated docker-compose.yml)
