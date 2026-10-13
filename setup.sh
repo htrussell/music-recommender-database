@@ -121,7 +121,7 @@ if ((!ASSUME_YES)); then
     if [[ ! -t 0 ]]; then
         fail "Loading replaces the existing music tables. Rerun with --yes to confirm."
     fi
-    printf '%s\n' "The loader drops and recreates the music tables in track-db."
+    printf '%s\n' "The loader drops and recreates the music tables in the airflow database."
     read -r -p "Continue with the database load? [y/N] " answer
     [[ "$answer" == "y" || "$answer" == "Y" ]] || {
         printf '%s\n' "Database load cancelled."

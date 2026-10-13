@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Recommender</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+	<!-- icon -->
+	<link rel="icon" type="image/png" href="favicon.ico" sizes="32x32" />
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full"></div>
+
+    <!-- Navigation Header -->
+    <header class="bg-slate-800/95 backdrop-blur border-b border-slate-700 px-6 py-4 flex flex-wrap justify-between items-center shadow-lg sticky top-0 z-40">
+        <div class="flex items-center space-x-3">
+            <div class="bg-blue-600 text-white px-2.5 py-1.5 rounded-lg font-bold text-lg tracking-wider shadow-md shadow-blue-900/40">
+                MUSIC
+            </div>
+            <div>
+                <h1 class="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                    Goal Mode AI Prototype
+                    <span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-700/60 px-2 py-0.5 rounded font-mono font-medium">v3.0</span>
+                </h1>
+                <p class="text-xs text-slate-400">Time-Budgeted Audio Recommendation Engine • Powered by local Ollama</p>
+            </div>
+        </div>
+
+        <!-- Tab Switching Controls -->
+        <div class="flex items-center space-x-2 mt-3 sm:mt-0">
+            <button id="tabBtnPrototype" onclick="switchTab('prototype')" 
+                class="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white shadow-md transition flex items-center space-x-2">
+                <i class="fa-solid fa-sliders"></i>
+                <span>Interactive Prototype</span>
+            </button>
+            <button id="tabBtnChat" onclick="switchTab('chat')" 
+                class="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition flex items-center space-x-2 border border-slate-700">
+                <i class="fa-solid fa-comments"></i>
+                <span>AI Taste Chat</span>
+                <span id="chatContextDot" class="hidden w-2 h-2 rounded-full bg-purple-400 animate-pulse" title="New queue ready for discussion"></span>
+            </button>
+            <button id="tabBtnOverview" onclick="switchTab('overview')" 
+                class="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition flex items-center space-x-2 border border-slate-700">
+                <i class="fa-solid fa-book-open"></i>
+                <span>Project Overview & Strategy</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- TAB 1: INTERACTIVE PROTOTYPE -->
+    <main id="prototypeTabView" class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 max-w-7xl mx-auto w-full">
+        
+        <!-- Left Column: Input Control Panel -->
+        <section class="lg:col-span-5 bg-slate-800/80 border border-slate-700 rounded-xl p-5 flex flex-col justify-between shadow-md space-y-4">
+            <div class="space-y-4">
+                <div class="border-b border-slate-700 pb-3 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-sm font-semibold text-white flex items-center">
+                            <i class="fa-solid fa-sliders text-blue-400 mr-2"></i> Listener Input Controls
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-0.5">Configure listening goals, playlist imports, and candidate music.</p>
+                    </div>
+                    <span id="apiStatusBadge" class="bg-blue-900/50 text-blue-300 border border-blue-700/50 px-2 py-0.5 rounded text-[10px] flex items-center">
+                        <i class="fa-solid fa-microchip mr-1"></i> Ollama via Docker
+                    </span>
+                </div>
+
+                <!-- Recommendation and playlist providers -->
+                <div class="space-y-3">
+                    <div>
+                        <label for="lastfmApiKeyInput" class="block text-xs font-medium text-slate-300 mb-1">
+                            Last.fm API Key <span class="text-slate-500 text-[10px]">(Optional — for playlist acoustic graph)</span>
+                        </label>
+                        <input type="password" id="lastfmApiKeyInput" placeholder="Paste your Last.fm API key"
+                            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition">
+                        <p class="text-[10px] text-slate-400 mt-1">Queries track/artist similarities. If omitted, Apple Music metadata is used.</p>
+                    </div>
+
+                    <div class="p-3 bg-slate-900/60 rounded-lg border border-slate-700/80 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <label for="youtubeTokenInput" class="text-xs font-medium text-slate-300">
+                                YouTube API Key or Bearer Token <span class="text-slate-500 text-[10px]">(Optional)</span>
+                            </label>
+                            <span class="text-[9px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">No OAuth required</span>
+                        </div>
+                        <input type="password" id="youtubeTokenInput" placeholder="AIzaSy... (API Key) or ya29... (Bearer token)"
+                            class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 transition">
+                        
+                        <label for="youtubePlaylistIdInput" class="block text-xs font-medium text-slate-300 pt-1">
+                            YouTube Playlist URL or ID
+                        </label>
+                        <input type="text" id="youtubePlaylistIdInput" placeholder="PLxxxxxxxx... or full playlist URL"
+                            class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500 transition">
+                        
+                        <button id="loadYoutubeBtn" type="button" onclick="loadYouTubePlaylist()"
+                            class="w-full mt-2 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-medium py-2 rounded-lg text-xs transition flex items-center justify-center space-x-1.5 shadow-md shadow-red-950/40">
+                            <i class="fa-brands fa-youtube"></i>
+                            <span>Import YouTube Playlist</span>
+                        </button>
+                        <div class="border-t border-slate-700 pt-2 mt-2">
+                            <label for="playlistJsonFileInput" class="block text-xs font-medium text-slate-300 mb-1">Or upload playlist JSON</label>
+                            <input id="playlistJsonFileInput" type="file" accept=".json,application/json"
+                                class="block w-full text-[10px] text-slate-400 file:mr-2 file:rounded file:border-0 file:bg-slate-700 file:px-2 file:py-1 file:text-[10px] file:text-slate-200">
+                            <button id="loadPlaylistJsonBtn" type="button" onclick="loadPlaylistJsonFile()"
+                                class="w-full mt-2 bg-slate-700 hover:bg-slate-600 text-slate-100 font-medium py-2 rounded-lg text-xs transition">
+                                Read JSON Playlist
+                            </button>
+                        </div>
+                        <p id="youtubeAuthStatus" class="text-[10px] text-slate-400 mt-1">Playlist URLs require a YouTube Data API key or access token. Both imports are normalized to the same JSON format.</p>
+                    </div>
+                </div>
+
+                <section class="p-3 bg-blue-950/30 rounded-lg border border-blue-800/50 space-y-2">
+                    <h3 class="text-xs font-semibold text-blue-200 flex items-center"><i class="fa-solid fa-shield-halved mr-1.5"></i> Listener data & consent</h3>
+                    <p class="text-[10px] text-slate-300 leading-relaxed">Playlist and profile data are stored only in this browser tab's session when you choose Save. YouTube playlist URLs are sent to YouTube; recommendation and chat context is sent to the local Ollama service. Ollama can read the music catalog through a read-only database role. Listener profile data stays separate from the music catalog.</p>
+                    <label class="flex items-start gap-2 text-[10px] text-slate-300">
+                        <input id="listenerConsentCheck" type="checkbox" class="mt-0.5 rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-0">
+                        <span>I consent to sending my listening goals, chat, and approved profile to local Ollama, and importing playlist data from YouTube for this demo.</span>
+                    </label>
+                </section>
+
+                <section class="p-3 bg-slate-900/60 rounded-lg border border-slate-700/80 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-xs font-semibold text-slate-200">Listener taste profile</h3>
+                        <span id="profileSaveStatus" class="text-[9px] text-slate-400">Not saved</span>
+                    </div>
+                    <label for="listenerTasteSummary" class="block text-[10px] font-medium text-slate-300">Taste summary (review and edit)</label>
+                    <textarea id="listenerTasteSummary" rows="2" placeholder="Import a playlist to draft a summary from its channels and tracks."
+                        class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 resize-y"></textarea>
+                    <label for="listenerExplicitPreferences" class="block text-[10px] font-medium text-slate-300">Your preferences or exclusions</label>
+                    <input id="listenerExplicitPreferences" type="text" placeholder="e.g., prefer upbeat synth; avoid explicit lyrics"
+                        class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500">
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" onclick="saveListenerProfile()" class="bg-blue-700 hover:bg-blue-600 text-white text-[10px] font-medium py-1.5 rounded transition">Save for this session</button>
+                        <button type="button" onclick="clearListenerData()" class="bg-slate-800 hover:bg-red-950 text-slate-300 hover:text-red-300 text-[10px] py-1.5 rounded border border-slate-700 transition">Clear listener data</button>
+                    </div>
+                </section>
+
+                <section id="playlistReviewPanel" class="hidden p-3 bg-slate-900/60 rounded-lg border border-emerald-800/60 space-y-2">
+                    <div class="flex justify-between items-center gap-2">
+                        <div>
+                            <h3 id="playlistReviewTitle" class="text-xs font-semibold text-emerald-200">Playlist review</h3>
+                            <p id="playlistReviewCount" class="text-[10px] text-slate-400"></p>
+                        </div>
+                        <button type="button" onclick="downloadNormalizedPlaylist()" class="text-[10px] text-blue-300 hover:text-blue-200 whitespace-nowrap">Download JSON</button>
+                    </div>
+                    <div id="playlistReviewTracks" class="max-h-44 overflow-y-auto space-y-1"></div>
+                    <button id="confirmPlaylistBtn" type="button" onclick="confirmPlaylistReview()"
+                        class="w-full bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-medium py-2 rounded transition">
+                        Use reviewed playlist
+                    </button>
+                    <details class="text-[10px]">
+                        <summary class="text-slate-400 cursor-pointer">View normalized playlist JSON</summary>
+                        <pre id="playlistJsonPreview" class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-emerald-300 bg-black/30 rounded p-2"></pre>
+                    </details>
+                </section>
+
+                <!-- Quick Preset Scenarios -->
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Preset Scenarios (Quick Test)</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button onclick="loadScenario(1)" class="bg-slate-700/80 hover:bg-slate-600 text-[11px] text-slate-200 py-1.5 px-2 rounded border border-slate-600 transition text-left truncate">
+                            1. Indie Discovery
+                        </button>
+                        <button onclick="loadScenario(2)" class="bg-slate-700/80 hover:bg-slate-600 text-[11px] text-slate-200 py-1.5 px-2 rounded border border-slate-600 transition text-left truncate">
+                            2. Ambient Focus
+                        </button>
+                        <button onclick="loadScenario(3)" class="bg-slate-700/80 hover:bg-slate-600 text-[11px] text-slate-200 py-1.5 px-2 rounded border border-slate-600 transition text-left truncate">
+                            3. Outside Discovery
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Goal Text Input -->
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label for="goalTextInput" class="text-xs font-medium text-slate-300">Goal Description</label>
+                        <span id="charCounter" class="text-[10px] text-slate-400 font-mono">0 / 500</span>
+                    </div>
+                    <textarea id="goalTextInput" rows="3" maxlength="500" placeholder="e.g., Replace fiction podcasts with economics and sports; keep my queue under 30 minutes..."
+                        class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 transition resize-none"></textarea>
+                </div>
+
+                <!-- Budget & Exclusions Controls -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label for="budgetInput" class="block text-xs font-medium text-slate-300 mb-1">Duration Range (Mins)</label>
+                        <input type="number" id="budgetInput" min="1" max="120" value="30"
+                            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500 transition">
+                    </div>
+                    <div>
+                        <label for="exclusionsInput" class="block text-xs font-medium text-slate-300 mb-1">Explicit Exclusions</label>
+                        <input type="text" id="exclusionsInput" placeholder="e.g., country, fiction, holiday"
+                            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 transition">
+                    </div>
+                </div>
+
+                <!-- History Context Setting -->
+                <div class="bg-slate-900/50 p-2.5 rounded-lg border border-slate-700/60 flex items-start space-x-2.5">
+                    <input type="checkbox" id="includeHistoryCheck" checked class="mt-1 rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-0">
+                    <label for="includeHistoryCheck" class="text-xs text-slate-300 cursor-pointer">
+                        <span class="font-medium text-slate-200">Include Listener History:</span> Heavy fiction podcast listener.
+                        <span class="text-slate-400 block text-[10px]">Tests if Goal Mode properly overrides existing habit inertia.</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Submit Action -->
+            <div class="pt-3 border-t border-slate-700">
+                <button id="generateBtn" onclick="generateGoalQueue()" 
+                    class="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-xs sm:text-sm transition flex items-center justify-center space-x-2 shadow-lg shadow-blue-900/40">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>Generate Goal Queue</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Right Column: Results & AI Queue -->
+        <section class="lg:col-span-7 space-y-6 flex flex-col">
+            
+            <!-- Output Panel -->
+            <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-5 flex-1 flex flex-col shadow-md">
+                <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4">
+                    <h2 class="text-sm font-semibold text-white flex items-center">
+                        <i class="fa-solid fa-list-check text-blue-400 mr-2"></i> Generated Audio Queue
+                    </h2>
+                    <div id="statusTag" class="bg-slate-700 text-slate-300 text-xs px-2.5 py-1 rounded-full font-mono">
+                        Ready
+                    </div>
+                </div>
+
+                <!-- Placeholder state -->
+                <div id="emptyState" class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-500">
+                    <i class="fa-solid fa-headphones text-4xl mb-3 text-slate-600"></i>
+                    <p class="text-sm font-medium">No active goal queue generated yet.</p>
+                    <p class="text-xs text-slate-400 max-w-sm mt-1">Enter a listening goal and click "Generate Goal Queue" to parse parameters, enforce budget constraints, and assemble tracks.</p>
+                </div>
+
+                <!-- Loading Spinner -->
+                <div id="loadingState" class="hidden flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
+                    <i class="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500 mb-3"></i>
+                    <p class="text-sm font-medium text-slate-200" id="loadingStateTitle">Parsing goal & evaluating candidate pool...</p>
+                    <p class="text-xs text-slate-400 mt-1" id="loadingStateSubtitle">Enforcing budget constraints & topic exclusions</p>
+                </div>
+
+                <!-- AI Output Content Container -->
+                <div id="outputContent" class="hidden space-y-4">
+                    
+                    <!-- Goal Extraction Summary Card -->
+                    <div class="bg-slate-900/80 border border-slate-700 rounded-lg p-3 text-xs space-y-2">
+                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                            <span class="text-slate-400">Normalized Goal:</span>
+                            <span id="resNormalizedGoal" class="text-slate-200 font-medium text-right max-w-xs"></span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-1">
+                            <div>
+                                <span class="text-slate-400 block mb-0.5">Preferred Topics:</span>
+                                <div id="resPreferredTopics" class="flex flex-wrap gap-1"></div>
+                            </div>
+                            <div>
+                                <span class="text-slate-400 block mb-0.5">Excluded Topics:</span>
+                                <div id="resExcludedTopics" class="flex flex-wrap gap-1"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-blue-950/30 border border-blue-800/50 rounded-lg p-3">
+                        <span class="text-[10px] font-semibold uppercase tracking-wider text-blue-300">AI Recommendation Note</span>
+                        <p id="resAiComment" class="text-xs text-slate-300 mt-1"></p>
+                    </div>
+
+                    <!-- Constraint Validation Metrics -->
+                    <div id="constraintMetrics" class="grid grid-cols-3 gap-2 text-center text-xs">
+                        <div class="bg-slate-900/60 p-2 rounded border border-slate-700/50">
+                            <span class="text-slate-400 text-[10px] block">Duration Used</span>
+                            <span id="metricDuration" class="font-semibold text-slate-200 font-mono">0 / 0 m</span>
+                        </div>
+                        <div class="bg-slate-900/60 p-2 rounded border border-slate-700/50">
+                            <span class="text-slate-400 text-[10px] block">Exclusion Check</span>
+                            <span id="metricExclusion" class="font-semibold text-emerald-400">Passed</span>
+                        </div>
+                        <div class="bg-slate-900/60 p-2 rounded border border-slate-700/50">
+                            <span class="text-slate-400 text-[10px] block">History Override</span>
+                            <span id="metricHistory" class="font-semibold text-blue-400">Active</span>
+                        </div>
+                    </div>
+
+                    <!-- Recommended Queue List -->
+                    <div>
+                        <h3 class="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">Queue Items</h3>
+                        <div id="queueList" class="space-y-2"></div>
+                    </div>
+
+                    <!-- Raw JSON Debug Collapse -->
+                    <details class="text-xs bg-slate-900 border border-slate-800 rounded-lg p-2.5">
+                        <summary class="text-slate-400 cursor-pointer hover:text-slate-200 font-mono text-[11px]">View Raw API JSON Response</summary>
+                        <pre id="rawJsonResponse" class="mt-2 text-[10px] text-emerald-400 font-mono overflow-x-auto p-2 bg-black/40 rounded border border-slate-800/80 max-h-48"></pre>
+                    </details>
+                </div>
+            </div>
+        </section>
+
+        <!-- Already-Heard Playlist -->
+        <section class="lg:col-span-12 bg-slate-800/40 border border-slate-700 rounded-xl p-5">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-sm font-semibold text-slate-200 flex items-center">
+                    <i class="fa-solid fa-clock-rotate-left text-amber-400 mr-2"></i> Already Heard Playlist
+                </h3>
+                <span id="playlistHistoryStatus" class="text-xs text-slate-400">Load a YouTube playlist to populate</span>
+            </div>
+            <div id="playlistHistoryList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto pr-1"></div>
+        </section>
+
+        <!-- Candidate Catalog Reference Table with Song Covers -->
+        <section class="lg:col-span-12 bg-slate-800/60 border border-slate-700 rounded-xl p-5">
+            <div class="flex justify-between items-center mb-3">
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-200 flex items-center">
+                        <i class="fa-solid fa-compact-disc text-blue-400 mr-2"></i> Candidate Recommendations Catalog
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-0.5">Candidate pool evaluated against listener goal constraints.</p>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button type="button" onclick="loadMoreTracksForPrompt()" 
+                        class="bg-blue-600/30 hover:bg-blue-600/50 active:bg-blue-700 text-blue-300 border border-blue-500/40 px-2.5 py-1 rounded text-xs flex items-center space-x-1.5 transition shadow-sm">
+                        <i class="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
+                        <span>Load Songs for Prompt</span>
+                    </button>
+                    <span id="catalogStatus" class="text-xs text-slate-400 font-mono">Load playlist or generate by prompt</span>
+                </div>
+            </div>
+            <div class="overflow-x-auto max-h-80 overflow-y-auto border border-slate-700/60 rounded-lg">
+                <table class="w-full text-left text-xs text-slate-300 border-collapse">
+                    <thead class="sticky top-0 bg-slate-900 border-b border-slate-700 text-slate-400 z-10">
+                        <tr>
+                            <th class="p-2.5 w-14">Cover</th>
+                            <th class="p-2.5">ID</th>
+                            <th class="p-2.5">Title</th>
+                            <th class="p-2.5">Artist / Creator</th>
+                            <th class="p-2.5">Category</th>
+                            <th class="p-2.5">Tags</th>
+                        </tr>
+                    </thead>
+                    <tbody id="catalogTableBody" class="divide-y divide-slate-800 bg-slate-900/40">
+                        <!-- Populated dynamically by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- TAB 2: AI TASTE CHAT & PREFERENCE DIALOGUE -->
+    <main id="chatTabView" class="hidden flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 max-w-7xl mx-auto w-full">
+        
+        <!-- Left Column: Synchronized Recommender Context & Taste Notes -->
+        <section class="lg:col-span-4 space-y-4 flex flex-col">
+            
+            <!-- Context Card -->
+            <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-4 shadow-md space-y-3">
+                <div class="flex items-center justify-between border-b border-slate-700 pb-2.5">
+                    <h2 class="text-xs font-semibold text-white flex items-center">
+                        <i class="fa-solid fa-satellite-dish text-blue-400 mr-2"></i> Synced Goal State
+                    </h2>
+                    <span id="chatSyncStatusBadge" class="bg-blue-900/50 text-blue-300 border border-blue-700/40 px-2 py-0.5 rounded text-[10px] font-mono">
+                        Live Sync
+                    </span>
+                </div>
+
+                <div id="chatActiveGoalCard" class="bg-slate-900/80 border border-slate-700/80 rounded-lg p-3 text-xs space-y-2">
+                    <div>
+                        <span class="text-[10px] text-slate-400 block">Current Goal:</span>
+                        <p id="chatContextGoalText" class="text-slate-200 font-medium mt-0.5 italic">None set yet</p>
+                    </div>
+                    <div class="flex items-center justify-between pt-1 border-t border-slate-800 text-[11px]">
+                        <span class="text-slate-400">Budget: <strong id="chatContextBudget" class="text-slate-200 font-mono">30m</strong></span>
+                        <span class="text-slate-400">Exclusions: <strong id="chatContextExclusions" class="text-slate-200">None</strong></span>
+                    </div>
+                </div>
+
+                <!-- Snapshot of Current Queue in Chat Sidebar -->
+                <div>
+                    <div class="flex justify-between items-center mb-1.5">
+                        <span class="text-[11px] font-medium text-slate-300">Active Queue Items</span>
+                        <span id="chatQueueCountBadge" class="text-[10px] text-slate-400 font-mono">0 tracks</span>
+                    </div>
+                    <div id="chatQueueSnapshotList" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                        <p class="text-[11px] text-slate-500 italic p-2 bg-slate-900/50 rounded border border-slate-800 text-center">
+                            Generate a queue in Tab 1 to critique specific tracks here.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Learned Conversational Preferences Card -->
+            <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-4 shadow-md space-y-3 flex-1 flex flex-col justify-between">
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between border-b border-slate-700 pb-2">
+                        <h3 class="text-xs font-semibold text-white flex items-center">
+                            <i class="fa-solid fa-brain text-purple-400 mr-2"></i> Learned Chat Preferences
+                        </h3>
+                        <span class="text-[9px] bg-purple-900/50 text-purple-300 border border-purple-700/40 px-1.5 py-0.5 rounded font-mono">
+                            Influences Goal Mode
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 leading-relaxed">
+                        Preferences & critiques discovered during chat are saved here and automatically injected into subsequent recommendation calls.
+                    </p>
+                    <div id="learnedTasteNotesContainer" class="flex flex-wrap gap-1.5 min-h-[50px] p-2 bg-slate-900/80 border border-slate-800 rounded-lg">
+                        <span class="text-[10px] text-slate-500 italic">No conversational preferences recorded yet. Tell the AI what you like or dislike!</span>
+                    </div>
+                </div>
+
+                <div class="pt-3 border-t border-slate-700/80 space-y-2">
+                    <button onclick="applyLearnedTasteToRecommender()" 
+                        class="w-full bg-purple-600/30 hover:bg-purple-600/50 active:bg-purple-700 text-purple-200 border border-purple-500/40 text-xs font-medium py-2 rounded-lg transition flex items-center justify-center space-x-1.5 shadow-sm">
+                        <i class="fa-solid fa-wand-magic-sparkles text-[11px]"></i>
+                        <span>Apply Insights & Run Goal Mode</span>
+                    </button>
+                    <button onclick="clearChatPreferences()" 
+                        class="w-full bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-300 text-[10px] py-1 rounded transition border border-slate-800">
+                        Reset Learned Chat Preferences
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Interactive Chat Interface -->
+        <section class="lg:col-span-8 bg-slate-800/80 border border-slate-700 rounded-xl flex flex-col shadow-md overflow-hidden min-h-[600px]">
+            
+            <!-- Chat Header -->
+            <div class="px-5 py-3.5 border-b border-slate-700 flex justify-between items-center bg-slate-800/95">
+                <div class="flex items-center space-x-3">
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center text-white text-xs shadow-md">
+                        <i class="fa-solid fa-sparkles"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-xs sm:text-sm font-semibold text-white flex items-center gap-1.5">
+                            AI Taste Concierge
+                            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        </h2>
+                        <p class="text-[10px] text-slate-400">Conversational taste exploration & recommendation feedback</p>
+                    </div>
+                </div>
+                <button onclick="clearChatHistory()" class="text-slate-400 hover:text-slate-200 text-xs px-2.5 py-1 rounded bg-slate-700/50 hover:bg-slate-700 transition">
+                    <i class="fa-solid fa-trash-can mr-1 text-[10px]"></i> Clear Chat
+                </button>
+            </div>
+
+            <!-- Quick Preset Prompt Starters -->
+            <div class="px-4 py-2 border-b border-slate-700/80 bg-slate-900/50 overflow-x-auto flex items-center space-x-2 text-[11px] scrollbar-none">
+                <span class="text-slate-400 text-[10px] whitespace-nowrap uppercase tracking-wider font-semibold mr-1">Suggestions:</span>
+                <button onclick="sendQuickPrompt('Why did you recommend the tracks currently in my queue?')" 
+                    class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full border border-slate-700 whitespace-nowrap transition">
+                    Why did you recommend these?
+                </button>
+                <button onclick="sendQuickPrompt('I want more upbeat tempo and less acoustic music. Can you suggest a refined goal?')" 
+                    class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full border border-slate-700 whitespace-nowrap transition">
+                    More upbeat, less acoustic
+                </button>
+                <button onclick="sendQuickPrompt('What specific subgenres or artists would complement my current playlist?')" 
+                    class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full border border-slate-700 whitespace-nowrap transition">
+                    Explore complementary subgenres
+                </button>
+                <button onclick="sendQuickPrompt('Help me create a 45-minute focus session without vocals.')" 
+                    class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full border border-slate-700 whitespace-nowrap transition">
+                    45m focus without vocals
+                </button>
+            </div>
+
+            <!-- Chat Message Feed -->
+            <div id="chatMessagesContainer" class="flex-1 p-5 overflow-y-auto space-y-4 max-h-[500px]">
+                <div class="flex items-start space-x-3">
+                    <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[11px] flex-shrink-0 mt-0.5 shadow">
+                        <i class="fa-solid fa-headphones"></i>
+                    </div>
+                    <div class="bg-slate-900/90 border border-slate-700/80 rounded-2xl rounded-tl-none p-3.5 text-xs text-slate-200 max-w-xl space-y-2 shadow-sm">
+                        <p class="leading-relaxed">
+                            Hello! I am your <strong>AI Taste Concierge</strong>. I have direct access to your current Goal Mode settings, loaded playlist signals, and queue recommendations.
+                        </p>
+                        <p class="leading-relaxed text-slate-300">
+                            Tell me what you liked or disliked about your recent queue, explore new musical directions, or ask me to propose a new goal. Any taste preferences we uncover will directly steer future recommendations!
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Input Bar -->
+            <div class="p-4 border-t border-slate-700 bg-slate-900/80">
+                <form id="chatInputForm" onsubmit="event.preventDefault(); sendChatMessage();" class="flex items-center space-x-2">
+                    <input type="text" id="chatTextInput" placeholder="Discuss recommendations, provide track feedback, or refine your taste..."
+                        class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500 transition">
+                    <button type="submit" id="chatSendBtn"
+                        class="bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white px-4 py-2.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-md shadow-purple-950/40">
+                        <span>Send</span>
+                        <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                    </button>
+                </form>
+                <div class="flex items-center justify-between mt-2 px-1 text-[10px] text-slate-400">
+                    <span>Powered by local Ollama • Read-only music catalog access</span>
+                    <span id="chatTypingIndicator" class="hidden text-purple-400 font-mono animate-pulse">
+                        <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> AI Concierge is reflecting...
+                    </span>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- TAB 3: PROJECT OVERVIEW & STRATEGY -->
+    <main id="overviewTabView" class="hidden flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
+        
+        <!-- Hero Header -->
+        <div class="bg-gradient-to-r from-blue-900/60 via-slate-800 to-slate-900 border border-blue-700/50 rounded-2xl p-6 shadow-xl">
+            <div class="max-w-3xl space-y-2">
+                <div class="inline-flex items-center space-x-2 bg-blue-500/20 text-blue-300 border border-blue-500/40 px-3 py-1 rounded-full text-xs font-semibold">
+                    <i class="fa-solid fa-satellite-dish"></i>
+                    <span>Strategic AI Feature Spec</span>
+                </div>
+                <h2 class="text-2xl font-bold text-white tracking-tight">Goal-Based Audio Listening System</h2>
+                <p class="text-sm text-slate-300 leading-relaxed">
+                    A machine-learning and LLM-assisted listening mode enabling listeners to establish explicit, time-bounded listening goals with strict topic exclusions that immediately override historical collaborative filtering habits.
+                </p>
+            </div>
+
+        </div>
+    <!-- Footer -->
+    <footer class="bg-slate-900 border-t border-slate-800 py-3 text-center text-xs text-slate-500">
+        Goal Mode AI Prototype • Strategic AI Feature Spec • <a href="https://github.com/htrussell/music-goal/" target="_blank" rel="noopener noreferrer"> 
+            <u> <span style="color: lightblue; padding: 0 4px;"> Source Code </span> </u>
+        </a>
+
+    </footer>
+
+    <script src="./app.js" defer></script>
+</body>
+</html>

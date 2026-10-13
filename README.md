@@ -25,6 +25,38 @@ the eight relational CSVs under `transformed/`, starts PostgreSQL with Docker
 Compose, and runs the containerized database loader. It asks before loading
 because the loader drops and recreates the music tables.
 
+After setup completes, connect to the populated database with:
+
+```bash
+docker compose exec postgres psql -U airflow -d airflow
+```
+
+Build and launch the local recommendation demo with:
+
+```bash
+bash ./start.sh
+```
+
+The launcher works on macOS, Linux, WSL, and Windows with Git Bash. It builds
+and starts the frontend, local AI API, Ollama, the required Ollama model, and
+PostgreSQL, waits for the web page to respond, then opens a browser where
+supported. The AI API waits until Ollama is healthy and model download
+completes. The first launch may take several minutes to download the model.
+Docker Desktop/Engine, Docker Compose v2, and `curl` must be installed; the
+engine must be running. It does not download or populate the music dataset.
+
+The UI is served at <http://localhost:8080>. Goal recommendations and taste chat use the
+`lfm2.5-thinking:latest` Ollama model through the `ai-api` container. The API
+generates a catalog query, checks it against the music-table allowlist, applies
+a row limit, and runs it using the `music_reader` PostgreSQL role. That role
+can only read the existing music tables; it cannot modify catalog data.
+`MUSIC_READER_PASSWORD` can be set in the shell or a Compose `.env` file to
+override the local-development default.
+
+Playlist and taste-profile review/save remain browser-session data. A listener
+profile is not written into the music database. The frontend imports public
+YouTube playlists via the YouTube Data API and reads normalized JSON files.
+
 Before running it, install Python 3.10+, Docker Desktop with Compose v2, and
 configure Kaggle API credentials either as `KAGGLE_USERNAME` / `KAGGLE_KEY`
 environment variables or in `~/.kaggle/kaggle.json`. To reuse source CSV files
@@ -34,3 +66,8 @@ confirm database replacement non-interactively.
 The separate `scripts/csv_to_parquet_hdfs.py` script is not run by this setup:
 it exports the transformed tables to HDFS and expects a reachable
 `namenode:9000`, which is not part of the PostgreSQL Docker Compose services.
+The current AI API reads PostgreSQL. Moving the catalog query layer to Parquet
+is a follow-up storage change; Kafka is already in Compose, and Avro could be
+used for versioned listener-feedback events if/when a schema registry and
+consumer are added. Avro streaming should not replace Parquet for analytical
+catalog storage.
