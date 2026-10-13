@@ -17,7 +17,7 @@ MODEL = os.getenv("OLLAMA_MODEL", "lfm2.5-thinking:latest")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
 ADMIN_DSN = os.getenv(
     "MUSIC_ADMIN_DSN",
-    "dbname=airflow user=airflow password=airflow host=postgres port=5432",
+    "dbname=track-db user=airflow password=airflow host=postgres port=5432",
 )
 READER_PASSWORD = os.getenv("MUSIC_READER_PASSWORD", "music_reader_local_dev")
 MUSIC_TABLES = {
@@ -82,7 +82,7 @@ def provision_read_only_role() -> None:
             existing_tables = [row[0] for row in cursor.fetchall()]
             cursor.execute(
                 sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
-                    sql.Identifier("airflow"),
+                    sql.Identifier("track-db"),
                     sql.Identifier("music_reader"),
                 )
             )
@@ -195,7 +195,7 @@ def query_music_catalog(query: str) -> list[dict[str, Any]]:
     safe_query = validate_read_query(query)
     try:
         with psycopg2.connect(
-            dbname="airflow",
+            dbname="track-db",
             user="music_reader",
             password=READER_PASSWORD,
             host="postgres",
@@ -224,7 +224,7 @@ def initialize_reader_role() -> None:
 def healthcheck() -> dict[str, str]:
     try:
         with psycopg2.connect(
-            dbname="airflow",
+            dbname="track-db",
             user="music_reader",
             password=READER_PASSWORD,
             host="postgres",
