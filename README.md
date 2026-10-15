@@ -38,26 +38,29 @@ bash ./start.sh
 ```
 
 The launcher works on macOS, Linux, WSL, and Windows with Git Bash. It builds
-and starts the frontend, local AI API, DuckDB catalog service, Ollama, the
-required Ollama model, and PostgreSQL, waits for the web page to respond, then
-opens a browser where supported. The AI API waits until Ollama is healthy and
-model download completes. The first launch may take several minutes to
-download the model.
+and starts the frontend, AI API, DuckDB catalog service, Ollama for local
+embeddings, and PostgreSQL, waits for the web page to respond, then opens a
+browser where supported. The AI API waits until Ollama is healthy and the
+embedding model download completes. The first launch may take several minutes
+to download the embedding model.
 Docker Desktop/Engine, Docker Compose v2, and `curl` must be installed; the
 engine must be running. It does not download or populate the music dataset.
 
-The UI is served at <http://localhost:8080>. Goal recommendations use the
-`lfm2.5-thinking:latest` Ollama model; chat uses Liquid AI's 1.2B Instruct GGUF
-(`hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M`) to avoid a thinking model.
-Catalog-tool planning and PostgreSQL fallback SQL generation use
-`qwen2.5-coder:1.5b`. For catalog questions, the API asks the SQL model to
-select a bounded catalog tool.
+The UI is served at <http://localhost:8080>. Recommendation generation uses
+the `llama` model key on the Cloudflare Worker at
+`https://music-rec-ai.htrussell.workers.dev`; chat and catalog/SQL planning use
+the `glm` model key. Set `CLOUDFLARE_WORKER_URL` in the shell or Compose `.env`
+file to override the Worker endpoint. `nomic-embed-text:v1.5` remains configured
+as the local Ollama embedding model. For catalog questions, the API asks the
+Worker's SQL model to select a bounded catalog tool.
 Track search, album search, and genre comparisons run as parameterized queries
 against DuckDB, which loads the transformed CSV tables from `transformed/` at
-startup. If the model selects an unsupported catalog operation, or DuckDB is
-unavailable, the API can fall back to its existing read-only PostgreSQL query
-path. PostgreSQL fallback SQL is still validated against the music-table
-allowlist and row limit and runs using the `music_reader` role.
+startup. Prompts, approved profile details, and relevant catalog rows are sent
+to the Cloudflare Worker for model processing. If the model selects an
+unsupported catalog operation, or DuckDB is unavailable, the API can fall back
+to its existing read-only PostgreSQL query path. PostgreSQL fallback SQL is
+still validated against the music-table allowlist and row limit and runs using
+the `music_reader` role.
 `MUSIC_READER_PASSWORD` can be set in the shell or a Compose `.env` file to
 override the local-development default.
 

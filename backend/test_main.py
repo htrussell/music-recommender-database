@@ -2,15 +2,18 @@ import unittest
 from unittest.mock import patch
 
 from fastapi import HTTPException
+import httpx
 import sqlglot
 
 from main import (
     AssistantRequest,
     CHAT_MODEL,
+    EMBEDDING_MODEL,
     MODEL,
     SQL_MODEL,
     assistant_json,
-    call_ollama,
+    call_cloudflare_worker,
+    clean_json,
     extract_youtube_playlist_id,
     fetch_catalog_for_request,
     generate_catalog_query,
@@ -20,6 +23,12 @@ from main import (
 
 
 class ReadOnlyQueryValidationTests(unittest.TestCase):
+    def test_cloudflare_models_are_assigned_to_the_expected_roles(self) -> None:
+        self.assertEqual(MODEL, "llama")
+        self.assertEqual(CHAT_MODEL, "glm")
+        self.assertEqual(SQL_MODEL, "glm")
+        self.assertEqual(EMBEDDING_MODEL, "nomic-embed-text:v1.5")
+
     def test_allows_catalog_select_and_adds_row_limit(self) -> None:
         query = validate_read_query("SELECT track_id, track_name FROM tracks")
 
@@ -39,7 +48,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
     def test_repairs_invalid_model_sql_before_catalog_execution(self) -> None:
         malformed_query = "SELECT FROM tracks WHERE EXCLUDE 'country, holiday music'"
         with patch(
-            "main.call_ollama",
+            "main.call_cloudflare_worker",
             side_effect=[
                 {"sql": malformed_query},
                 {"sql": "SELECT track_id FROM tracks"},
@@ -57,7 +66,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
 
     def test_repairs_query_that_does_not_read_from_catalog(self) -> None:
         with patch(
-            "main.call_ollama",
+            "main.call_cloudflare_worker",
             side_effect=[
                 {"sql": "SELECT 'indie and alternative'"},
                 {"sql": "SELECT tracks.track_id, tracks.track_name FROM tracks"},
@@ -81,7 +90,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             "artists.artist_name AS artist, tracks.duration_ms, genre.genre_name AS genre, "
             "track_feel.energy AS energy"
         )
-        with patch("main.call_ollama", return_value={"sql": projection}) as ollama:
+        with patch("main.call_cloudflare_worker", return_value={"sql": projection}) as ollama:
             safe_query = generate_catalog_query("Recommend indie music with atmospheric guitars.")
 
         self.assertIn("FROM tracks", safe_query)
@@ -97,7 +106,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             "artists.artist_name AS artist FROM tracks "
             "JOIN artists ON tracks.artist_id = artists.artist_id"
         )
-        with patch("main.call_ollama", return_value={"sql": generated_query}):
+        with patch("main.call_cloudflare_worker", return_value={"sql": generated_query}):
             safe_query = generate_catalog_query("Recommend indie tracks.")
 
         self.assertIn(
@@ -115,7 +124,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             "SELECT tracks.track_id AS catalog_track_id, tracks.track_name AS title, "
             "genre_name AS genre FROM tracks"
         )
-        with patch("main.call_ollama", return_value={"sql": generated_query}):
+        with patch("main.call_cloudflare_worker", return_value={"sql": generated_query}):
             safe_query = generate_catalog_query("Recommend indie tracks.")
 
         self.assertIn("genre.genre_name AS genre", safe_query)
@@ -129,7 +138,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             "SELECT tracks.track_id AS catalog_track_id, tracks.track_name AS title, "
             "artists.artist_name AS artist FROM track_id"
         )
-        with patch("main.call_ollama", return_value={"sql": generated_query}) as ollama:
+        with patch("main.call_cloudflare_worker", return_value={"sql": generated_query}) as ollama:
             safe_query = generate_catalog_query("Recommend indie tracks.")
 
         self.assertIn("FROM tracks", safe_query)
@@ -154,7 +163,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
     def test_rejects_query_if_model_correction_is_still_invalid(self) -> None:
         with (
             patch(
-                "main.call_ollama",
+                "main.call_cloudflare_worker",
                 side_effect=[
                     {"sql": "SELECT track_id FROM secret_table"},
                     {"sql": "DELETE FROM tracks"},
@@ -199,7 +208,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         )
         with (
             patch(
-                "main.call_ollama",
+                "main.call_cloudflare_worker",
                 side_effect=[
                     {"tool": "search_tracks", "arguments": {"genre": "rock"}},
                     {"reply": "Try these tracks."},
@@ -237,7 +246,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             task="chat",
         )
         with (
-            patch("main.call_ollama", return_value={"reply": "Hello!"}) as ollama,
+            patch("main.call_cloudflare_worker", return_value={"reply": "Hello!"}) as ollama,
             patch("main.query_music_catalog") as query,
             patch("main.query_duckdb_catalog") as duckdb_query,
         ):
@@ -256,7 +265,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
     def test_uses_postgres_when_tool_plan_requests_fallback(self) -> None:
         with (
             patch(
-                "main.call_ollama",
+                "main.call_cloudflare_worker",
                 side_effect=[
                     {"tool": "postgres_fallback", "arguments": {"reason": "Needs a country filter."}},
                     {"sql": "SELECT track_name FROM tracks"},
@@ -280,7 +289,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
     def test_falls_back_to_postgres_if_duckdb_is_unavailable(self) -> None:
         with (
             patch(
-                "main.call_ollama",
+                "main.call_cloudflare_worker",
                 side_effect=[
                     {"tool": "search_tracks", "arguments": {"query": "blue train"}},
                     {"sql": "SELECT track_name FROM tracks"},
@@ -306,7 +315,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
     def test_falls_back_to_postgres_when_duckdb_rejects_model_arguments(self) -> None:
         with (
             patch(
-                "main.call_ollama",
+                "main.call_cloudflare_worker",
                 side_effect=[
                     {"tool": "search_tracks", "arguments": {"query": "blue train"}},
                     {"sql": "SELECT track_name FROM tracks"},
@@ -373,7 +382,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 "main.generate_catalog_tool",
                 return_value={"tool": "no_catalog", "arguments": {}},
             ),
-            patch("main.call_ollama", return_value={"reply": "Stardust by Halsey matches your goal."}) as ollama,
+            patch("main.call_cloudflare_worker", return_value={"reply": "Stardust by Halsey matches your goal."}) as ollama,
         ):
             response = assistant_json(
                 AssistantRequest(
@@ -387,16 +396,144 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(response["catalog"], [])
         self.assertEqual(response["catalog_source"], "none")
 
-    def test_ollama_reasoning_is_disabled_for_json_responses(self) -> None:
-        with patch("main.httpx.post") as ollama:
-            ollama.return_value.json.return_value = {
-                "message": {"content": '{"reply":"Hello!"}'}
-            }
-            result = call_ollama("Return JSON.", "Say hello.")
+    def test_cloudflare_worker_receives_model_and_chat_messages(self) -> None:
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {"result": '{"reply":"Hello!"}'}
+            result = call_cloudflare_worker("Return JSON.", "Say hello.")
 
         self.assertEqual(result, {"reply": "Hello!"})
-        self.assertEqual(ollama.call_args.kwargs["json"]["model"], MODEL)
-        self.assertFalse(ollama.call_args.kwargs["json"]["think"])
+        self.assertEqual(worker.call_args.kwargs["json"]["model"], MODEL)
+        self.assertEqual(
+            worker.call_args.kwargs["json"]["messages"],
+            [
+                {"role": "system", "content": "Return JSON."},
+                {"role": "user", "content": "Say hello."},
+            ],
+        )
+        self.assertIn("music-rec-ai.htrussell.workers.dev", worker.call_args.args[0])
+
+    def test_clean_json_extracts_object_from_surrounding_prose(self) -> None:
+        result = clean_json(
+            'Here is the response you requested:\n```json\n{"reply":"Hello!"}\n```\n'
+        )
+
+        self.assertEqual(result, {"reply": "Hello!"})
+
+    def test_clean_json_explains_non_json_response(self) -> None:
+        with self.assertRaises(HTTPException) as error:
+            clean_json("I cannot provide a JSON response.")
+
+        self.assertEqual(error.exception.status_code, 502)
+        self.assertIn("did not return a JSON object", error.exception.detail)
+
+    def test_cloudflare_chat_model_receives_messages(self) -> None:
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {"result": '{"reply":"Hello!"}'}
+            result = call_cloudflare_worker(
+                "Return JSON.",
+                "Say hello.",
+                model=CHAT_MODEL,
+            )
+
+        self.assertEqual(result, {"reply": "Hello!"})
+        self.assertEqual(
+            worker.call_args.kwargs["json"],
+            {
+                "model": CHAT_MODEL,
+                "messages": [
+                    {"role": "system", "content": "Return JSON."},
+                    {"role": "user", "content": "Say hello."},
+                ],
+            },
+        )
+
+    def test_cloudflare_worker_accepts_object_result(self) -> None:
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {"result": {"reply": "Hello!"}}
+            result = call_cloudflare_worker("Return JSON.", "Say hello.")
+
+        self.assertEqual(result, {"reply": "Hello!"})
+
+    def test_cloudflare_worker_parses_ai_response_field(self) -> None:
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {
+                "result": {"response": '{"reply":"Hello!"}'}
+            }
+            result = call_cloudflare_worker(
+                "Return JSON.",
+                "Say hello.",
+                model=CHAT_MODEL,
+            )
+
+        self.assertEqual(result, {"reply": "Hello!"})
+
+    def test_cloudflare_worker_parses_chat_completion_result(self) -> None:
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {
+                "result": {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": '```json\n{"reply":"Hello!"}\n```',
+                            }
+                        }
+                    ]
+                }
+            }
+            result = call_cloudflare_worker(
+                "Return JSON.",
+                "Say hello.",
+                model=CHAT_MODEL,
+            )
+
+        self.assertEqual(result, {"reply": "Hello!"})
+
+    def test_cloudflare_chat_allows_plain_text_as_reply(self) -> None:
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {
+                "result": {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "Hello! How can I assist you today?",
+                            }
+                        }
+                    ]
+                }
+            }
+            result = call_cloudflare_worker(
+                "Return a JSON response.",
+                "Say hello.",
+                model=CHAT_MODEL,
+                allow_plain_text=True,
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "reply": "Hello! How can I assist you today?",
+                "extracted_taste_insights": [],
+                "suggested_recommender_action": None,
+            },
+        )
+
+    def test_cloudflare_worker_surfaces_provider_error_details(self) -> None:
+        response = httpx.Response(
+            500,
+            json={
+                "error": "Internal Server Error",
+                "details": "Expected property name or '}' in JSON at position 7",
+            },
+            request=httpx.Request("POST", "https://worker.example"),
+        )
+        with patch("main.httpx.post", return_value=response):
+            with self.assertRaises(HTTPException) as error:
+                call_cloudflare_worker("Return JSON.", "Say hello.")
+
+        self.assertEqual(error.exception.status_code, 502)
+        self.assertIn("Expected property name", error.exception.detail)
 
     def test_extracts_only_youtube_playlist_ids(self) -> None:
         self.assertEqual(

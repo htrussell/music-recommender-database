@@ -579,7 +579,7 @@
             }
         }
 
-        async function requestOllamaJson(systemInstruction, userContent, task = "recommendation") {
+        async function requestAiJson(systemInstruction, userContent, task = "recommendation") {
             const response = await fetch("/api/ai/json", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -654,9 +654,17 @@ Previously Recommended / Existing IDs to avoid: ${JSON.stringify((existingIds ||
 `;
 
             try {
-                const result = await requestOllamaJson(systemPrompt, userPrompt);
+                const result = await requestAiJson(systemPrompt, userPrompt, "chat");
                 if (!Array.isArray(result.tracks)) {
-                    throw new Error("Ollama's discovery response did not include a tracks array.");
+                    throw new Error("AI discovery response did not include a tracks array.");
+                }
+                if (result.tracks.some(track =>
+                    !track ||
+                    typeof track !== "object" ||
+                    typeof track.title !== "string" ||
+                    typeof track.artist !== "string"
+                )) {
+                    throw new Error("AI discovery response included an invalid track.");
                 }
                 
                 return result.tracks.map(track => {
@@ -716,9 +724,17 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
 `;
 
             try {
-                const result = await requestOllamaJson(systemPrompt, userPrompt);
+                const result = await requestAiJson(systemPrompt, userPrompt, "chat");
                 if (!Array.isArray(result.tracks)) {
-                    throw new Error("Ollama's budget response did not include a tracks array.");
+                    throw new Error("AI budget response did not include a tracks array.");
+                }
+                if (result.tracks.some(track =>
+                    !track ||
+                    typeof track !== "object" ||
+                    typeof track.title !== "string" ||
+                    typeof track.artist !== "string"
+                )) {
+                    throw new Error("AI budget response included an invalid track.");
                 }
                 
                 let accumulatedMinutes = 0;
@@ -782,7 +798,7 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                     renderCatalogTable();
                     showToast(`Loaded ${discovered.length} songs for "${goalText}" into candidate catalog!`, "success");
                 } else {
-                    showToast("Ollama did not find any new matching tracks.", "warning");
+                    showToast("AI did not find any new matching tracks.", "warning");
                 }
             } catch (err) {
                 showToast(`Could not load tracks from the local AI service: ${err.message}`, "error");
@@ -878,7 +894,7 @@ ${compactCatalogPrompt}
 `;
 
             try {
-                let parsedData = await requestOllamaJson(systemPrompt, userPrompt);
+                let parsedData = await requestAiJson(systemPrompt, userPrompt);
                 
                 let currentRecs = normalizeRecommendations(parsedData.recommendations);
                 parsedData.recommendations = currentRecs;
@@ -1389,7 +1405,7 @@ NEW LISTENER MESSAGE:
 `;
 
             try {
-                const response = await requestOllamaJson(systemInstruction, chatPrompt, "chat");
+                const response = await requestAiJson(systemInstruction, chatPrompt, "chat");
                 
                 CHAT_HISTORY.push({ role: "user", text: userText });
                 CHAT_HISTORY.push({ role: "assistant", text: response.reply });
@@ -1409,7 +1425,7 @@ NEW LISTENER MESSAGE:
 
             } catch (err) {
                 console.error("Chat error:", err);
-                appendMessageToFeed("assistant", `I ran into an issue connecting with the local Ollama service: ${err.message}. Check the Docker services and try again.`);
+                appendMessageToFeed("assistant", `I ran into an issue connecting with the Cloudflare AI Worker: ${err.message}. Check the Worker URL and Docker services, then try again.`);
                 showToast(`Chat error: ${err.message}`, "error");
             } finally {
                 if (typingEl) typingEl.classList.remove("hidden");

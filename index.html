@@ -31,7 +31,7 @@
                     Goal Mode AI Prototype
                     <span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-700/60 px-2 py-0.5 rounded font-mono font-medium">v3.0</span>
                 </h1>
-                <p class="text-xs text-slate-400">Time-Budgeted Audio Recommendation Engine • Powered by local Ollama</p>
+                <p class="text-xs text-slate-400">Time-Budgeted Audio Recommendation Engine • Cloudflare AI with local embedding model provisioned</p>
             </div>
         </div>
 
@@ -103,10 +103,10 @@
 
                 <section class="p-3 bg-blue-950/30 rounded-lg border border-blue-800/50 space-y-2">
                     <h3 class="text-xs font-semibold text-blue-200 flex items-center"><i class="fa-solid fa-shield-halved mr-1.5"></i> Listener data & consent</h3>
-                    <p class="text-[10px] text-slate-300 leading-relaxed">Playlist and profile data are stored only in this browser tab's session when you choose Save. Public playlist links are read by the local backend; recommendation and chat context is sent to local Ollama. Ollama can read the music catalog through a read-only database role. Listener profile data stays separate from the music catalog.</p>
+                    <p class="text-[10px] text-slate-300 leading-relaxed">Playlist and profile data are stored only in this browser tab's session when you choose Save. Public playlist links are read by the local backend. Recommendation and chat prompts, approved profile details, and relevant catalog results are sent to the Cloudflare AI Worker. The local backend reads the catalog through a read-only database role. Listener profile data is not stored in the music catalog.</p>
                     <label class="flex items-start gap-2 text-[10px] text-slate-300">
                         <input id="listenerConsentCheck" type="checkbox" class="mt-0.5 rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-0">
-                        <span>I consent to sending my listening goals, chat, and approved profile to local Ollama, and importing playlist data from YouTube for this demo.</span>
+                        <span>I consent to sending my listening goals, chat, approved profile details, and relevant catalog results to the Cloudflare AI Worker, and importing playlist data from YouTube for this demo.</span>
                     </label>
                 </section>
 
@@ -487,7 +487,7 @@
                     </button>
                 </form>
                 <div class="flex items-center justify-between mt-2 px-1 text-[10px] text-slate-400">
-                    <span>Powered by local Ollama • Read-only music catalog access</span>
+                    <span>Cloudflare AI • Read-only music catalog access</span>
                     <span id="chatTypingIndicator" class="hidden text-purple-400 font-mono animate-pulse">
                         <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> AI Concierge is reflecting...
                     </span>

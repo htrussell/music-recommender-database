@@ -16,13 +16,15 @@ from sqlglot import exp
 import yt_dlp
 
 
-MODEL = os.getenv("OLLAMA_MODEL", "lfm2.5-thinking:latest")
-CHAT_MODEL = os.getenv(
-    "OLLAMA_CHAT_MODEL",
-    "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M",
-)
-SQL_MODEL = os.getenv("OLLAMA_SQL_MODEL", "qwen2.5-coder:1.5b")
+MODEL = os.getenv("CLOUDFLARE_RECOMMENDATION_MODEL", "llama")
+CHAT_MODEL = os.getenv("CLOUDFLARE_CHAT_MODEL", "glm")
+SQL_MODEL = os.getenv("CLOUDFLARE_SQL_MODEL", "glm")
+EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:v1.5")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+CLOUDFLARE_WORKER_URL = os.getenv(
+    "CLOUDFLARE_WORKER_URL",
+    "https://music-rec-ai.htrussell.workers.dev",
+).rstrip("/")
 DUCKDB_URL = os.getenv("DUCKDB_URL", "http://duckdb:8001")
 ADMIN_DSN = os.getenv(
     "MUSIC_ADMIN_DSN",
@@ -262,54 +264,126 @@ def provision_read_only_role() -> None:
 
 def clean_json(text: str) -> dict[str, Any]:
     cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text.strip(), flags=re.IGNORECASE)
-    try:
-        value = json.loads(cleaned)
-    except json.JSONDecodeError as error:
-        raise HTTPException(status_code=502, detail=f"Ollama returned invalid JSON: {error}") from error
-    if not isinstance(value, dict):
-        raise HTTPException(status_code=502, detail="Ollama returned JSON that was not an object.")
-    return value
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", cleaned):
+        try:
+            value, _ = decoder.raw_decode(cleaned[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    excerpt = cleaned[:200].replace("\n", " ").strip()
+    if not excerpt:
+        detail = "AI provider returned an empty response instead of a JSON object."
+    else:
+        detail = f"AI provider did not return a JSON object. Response began: {excerpt!r}"
+    raise HTTPException(status_code=502, detail=detail)
 
 
-def call_ollama(
+def call_cloudflare_worker(
     system_message: str,
     user_message: str,
     *,
     model: str = MODEL,
+    allow_plain_text: bool = False,
 ) -> dict[str, Any]:
+    input_payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message},
+        ],
+    }
     try:
         response = httpx.post(
-            f"{OLLAMA_URL.rstrip('/')}/api/chat",
-            json={
-                "model": model,
-                "stream": False,
-                "format": "json",
-                "think": False,
-                "messages": [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": user_message},
-                ],
-                "options": {"temperature": 0.2, "num_predict": 1600},
-            },
+            CLOUDFLARE_WORKER_URL,
+            json=input_payload,
             timeout=180.0,
         )
         response.raise_for_status()
-    except httpx.HTTPError as error:
-        raise HTTPException(status_code=503, detail=f"Could not reach local Ollama: {error}") from error
+    except httpx.HTTPStatusError as error:
+        response_detail = error.response.text.strip()
+        if response_detail:
+            response_detail = response_detail[:500]
+            detail = (
+                f"Cloudflare AI Worker returned HTTP {error.response.status_code}: "
+                f"{response_detail}"
+            )
+        else:
+            detail = f"Cloudflare AI Worker returned HTTP {error.response.status_code}."
+        raise HTTPException(status_code=502, detail=detail) from error
+    except httpx.RequestError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach the Cloudflare AI Worker: {error}",
+        ) from error
 
-    content = response.json().get("message", {}).get("content", "")
-    if not content:
-        raise HTTPException(status_code=502, detail="Ollama returned an empty response.")
-    return clean_json(content)
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Cloudflare AI Worker returned an invalid response.",
+        ) from error
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if isinstance(result, dict):
+        content = result.get("response")
+        if isinstance(content, str) and content.strip():
+            try:
+                return clean_json(content)
+            except HTTPException:
+                if allow_plain_text:
+                    return {
+                        "reply": content.strip(),
+                        "extracted_taste_insights": [],
+                        "suggested_recommender_action": None,
+                    }
+                raise
+        choices = result.get("choices")
+        if isinstance(choices, list) and choices:
+            first_choice = choices[0]
+            message = first_choice.get("message") if isinstance(first_choice, dict) else None
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, str) and content.strip():
+                try:
+                    return clean_json(content)
+                except HTTPException:
+                    if allow_plain_text:
+                        return {
+                            "reply": content.strip(),
+                            "extracted_taste_insights": [],
+                            "suggested_recommender_action": None,
+                        }
+                    raise
+            raise HTTPException(
+                status_code=502,
+                detail="Cloudflare AI Worker returned a completion without message content.",
+            )
+        return result
+    if not isinstance(result, str) or not result.strip():
+        raise HTTPException(
+            status_code=502,
+            detail="Cloudflare AI Worker returned an empty or invalid result.",
+        )
+    try:
+        return clean_json(result)
+    except HTTPException:
+        if allow_plain_text:
+            return {
+                "reply": result.strip(),
+                "extracted_taste_insights": [],
+                "suggested_recommender_action": None,
+            }
+        raise
 
 
 def validate_read_query(query: str) -> str:
     if not query or len(query) > 10000:
-        raise HTTPException(status_code=400, detail="Ollama generated an empty or oversized database query.")
+        raise HTTPException(status_code=400, detail="AI generated an empty or oversized database query.")
     try:
         statements = sqlglot.parse(query, read="postgres")
     except sqlglot.errors.ParseError as error:
-        raise HTTPException(status_code=400, detail=f"Ollama generated invalid SQL: {error}") from error
+        raise HTTPException(status_code=400, detail=f"AI generated invalid SQL: {error}") from error
 
     if len(statements) != 1 or not isinstance(statements[0], exp.Select):
         raise HTTPException(status_code=400, detail="Only a single SELECT query is permitted.")
@@ -547,7 +621,7 @@ def generate_catalog_tool(user_content: str) -> dict[str, Any]:
         "search may return no matches. Keep arguments concise and use null or empty lists for unused "
         "filters. The response schema is {tool: string, arguments: object}."
     )
-    plan = call_ollama(
+    plan = call_cloudflare_worker(
         tool_instruction,
         f"Listener request:\n{user_content}",
         model=SQL_MODEL,
@@ -555,7 +629,7 @@ def generate_catalog_tool(user_content: str) -> dict[str, Any]:
     tool = plan.get("tool")
     arguments = plan.get("arguments", {})
     if not isinstance(tool, str) or not isinstance(arguments, dict):
-        raise HTTPException(status_code=502, detail="Ollama returned an invalid catalog-tool request.")
+        raise HTTPException(status_code=502, detail="AI provider returned an invalid catalog-tool request.")
     return {"tool": tool, "arguments": arguments}
 
 
@@ -651,7 +725,7 @@ def generate_catalog_query(user_content: str) -> str | None:
         "Do not use schema-qualified tables, comments, multiple statements, or functions. "
         "Add a LIMIT no greater than 100."
     )
-    plan = call_ollama(
+    plan = call_cloudflare_worker(
         query_system_instruction,
         f"Listener request:\n{user_content}",
         model=SQL_MODEL,
@@ -660,7 +734,7 @@ def generate_catalog_query(user_content: str) -> str | None:
     if query is None:
         return None
     if not isinstance(query, str):
-        raise HTTPException(status_code=502, detail="Ollama did not provide a database SELECT query.")
+        raise HTTPException(status_code=502, detail="AI provider did not provide a database SELECT query.")
 
     canonical_query = canonicalize_catalog_sources(query)
     if canonical_query is not None:
@@ -678,7 +752,7 @@ def generate_catalog_query(user_content: str) -> str | None:
             if missing_catalog_table
             else ""
         )
-        repair = call_ollama(
+        repair = call_cloudflare_worker(
             query_system_instruction
             + " The previous generated SQL failed validation. Create a corrected query that satisfies "
             "all rules. If a user criterion cannot be expressed using the listed schema, omit that "
@@ -698,7 +772,7 @@ def generate_catalog_query(user_content: str) -> str | None:
         if not isinstance(repaired_query, str):
             raise HTTPException(
                 status_code=502,
-                detail="Ollama could not correct its invalid catalog query.",
+                detail="AI provider could not correct its invalid catalog query.",
             )
         try:
             return validate_read_query(repaired_query)
@@ -706,7 +780,7 @@ def generate_catalog_query(user_content: str) -> str | None:
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Ollama could not generate a valid read-only catalog query after correction: "
+                    "AI provider could not generate a valid read-only catalog query after correction: "
                     f"{repair_error.detail}"
                 ),
             ) from repair_error
@@ -747,18 +821,18 @@ def healthcheck() -> dict[str, str]:
         }
     except (ValueError, TypeError) as error:
         raise HTTPException(status_code=503, detail=f"Ollama returned an invalid model list: {error}") from error
-    required_models = {
-        "recommendation": MODEL,
-        "chat": CHAT_MODEL,
-        "sql": SQL_MODEL,
-    }
+    required_models = {"embedding": EMBEDDING_MODEL}
     missing_models = [model for model in required_models.values() if model not in available_models]
     if missing_models:
         raise HTTPException(
             status_code=503,
             detail=f"Required local model(s) are not available yet: {', '.join(missing_models)}.",
         )
-    return {"status": "ok", **{f"{role}_model": model for role, model in required_models.items()}}
+    return {
+        "status": "ok",
+        "model": f"Cloudflare Worker ({MODEL}/{CHAT_MODEL}/{SQL_MODEL})",
+        **{f"{role}_model": model for role, model in required_models.items()},
+    }
 
 
 @app.post("/api/playlist/youtube")
@@ -828,9 +902,10 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
                 "db:<catalog_track_id>."
             )
 
-    final_result = call_ollama(
+    final_result = call_cloudflare_worker(
         final_system_instruction,
         final_user_content,
         model=CHAT_MODEL if request.task == "chat" else MODEL,
+        allow_plain_text=request.task == "chat",
     )
     return {"result": final_result, "catalog": rows, "catalog_source": catalog_source}

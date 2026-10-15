@@ -27,10 +27,10 @@ docker info >/dev/null 2>&1 || {
     exit 1
 }
 
-printf '%s\n' "Building and starting the web UI, local AI API, Ollama/model, and required database service..."
+printf '%s\n' "Building and starting the web UI, Cloudflare-backed AI API, local embedding model, and database service..."
 docker compose up --build --detach frontend ai-api ollama
 
-printf 'Waiting up to %s seconds for the model download and web UI at %s ...\n' "$STARTUP_TIMEOUT_SECONDS" "$WEB_URL"
+printf 'Waiting up to %s seconds for the embedding model download and web UI at %s ...\n' "$STARTUP_TIMEOUT_SECONDS" "$WEB_URL"
 ready=0
 for ((second = 0; second < STARTUP_TIMEOUT_SECONDS; second += 2)); do
     if curl --silent --fail --output /dev/null "$WEB_URL"; then
