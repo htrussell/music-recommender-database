@@ -9,6 +9,8 @@ import duckdb_service
 class DuckDBCatalogToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.previous_connection = duckdb_service.connection
+        self.previous_musicbrainz_index_available = duckdb_service.musicbrainz_index_available
+        duckdb_service.musicbrainz_index_available = False
         duckdb_service.connection = duckdb.connect(":memory:")
         connection = duckdb_service.connection
         connection.execute(
@@ -54,6 +56,7 @@ class DuckDBCatalogToolTests(unittest.TestCase):
         assert duckdb_service.connection is not None
         duckdb_service.connection.close()
         duckdb_service.connection = self.previous_connection
+        duckdb_service.musicbrainz_index_available = self.previous_musicbrainz_index_available
 
     def test_track_search_uses_bound_filters_and_applies_explicit_exclusion(self) -> None:
         response = duckdb_service.query_catalog(
@@ -82,6 +85,138 @@ class DuckDBCatalogToolTests(unittest.TestCase):
         )
 
         self.assertEqual(response["rows"], [])
+
+    def test_track_verification_returns_catalog_pair_for_exact_title(self) -> None:
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="verify_tracks",
+                arguments={"tracks": [{"title": " blue-train! ", "artist": "Someone else"}]},
+            )
+        )
+
+        exact_title = next(
+            row for row in response["rows"] if row["title"] == "Blue Train"
+        )
+        self.assertEqual(exact_title["artist"], "Alice")
+        self.assertEqual(exact_title["candidate_artist_match"], 0)
+
+    def test_track_verification_accepts_close_title_with_matching_artist(self) -> None:
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="verify_tracks",
+                arguments={"tracks": [{"title": "Blue Trane", "artist": "Alice"}]},
+            )
+        )
+
+        match = next(
+            row for row in response["rows"] if row["catalog_track_id"] == "t1"
+        )
+        self.assertGreaterEqual(match["title_similarity"], 0.60)
+        self.assertGreaterEqual(match["artist_similarity"], 0.88)
+
+    def test_track_verification_returns_close_title_candidates_for_artist_validation(self) -> None:
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="verify_tracks",
+                arguments={"tracks": [{"title": "Blue Trane", "artist": "Unrelated Artist"}]},
+            )
+        )
+
+        match = next(
+            row for row in response["rows"] if row["catalog_track_id"] == "t1"
+        )
+        self.assertGreaterEqual(match["title_similarity"], 0.60)
+        self.assertLess(match["artist_similarity"], 0.65)
+
+    def test_track_verification_returns_loose_title_candidates_for_artist_validation(self) -> None:
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="verify_tracks",
+                arguments={"tracks": [{"title": "B Trin", "artist": "Alice"}]},
+            )
+        )
+
+        match = next(
+            row for row in response["rows"] if row["catalog_track_id"] == "t1"
+        )
+        self.assertGreaterEqual(match["title_similarity"], 0.60)
+        self.assertLess(match["title_similarity"], 0.68)
+        self.assertEqual(match["candidate_artist_match"], 1)
+
+    def test_track_verification_keeps_unicode_title_and_artist_characters(self) -> None:
+        assert duckdb_service.connection is not None
+        duckdb_service.connection.execute(
+            "INSERT INTO tracks VALUES ('t-jp', 'カタカナ!', 180000, 1, 50, false, 4)"
+        )
+        duckdb_service.connection.execute(
+            "INSERT INTO artists VALUES (4, '宇多田ヒカル', 'JP', 90)"
+        )
+        duckdb_service.connection.execute(
+            "INSERT INTO track_artists VALUES ('t-jp', 4)"
+        )
+
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="verify_tracks",
+                arguments={"tracks": [{"title": "カタカナ", "artist": "宇多田ヒカル"}]},
+            )
+        )
+
+        self.assertEqual(len(response["rows"]), 1)
+        self.assertEqual(response["rows"][0]["catalog_track_id"], "t-jp")
+
+    def test_track_verification_prefers_matching_artist_for_duplicate_titles(self) -> None:
+        assert duckdb_service.connection is not None
+        duckdb_service.connection.execute(
+            "INSERT INTO tracks VALUES ('t3', 'Blue Train', 600000, 1, 95, false, 3)"
+        )
+        duckdb_service.connection.execute(
+            "INSERT INTO artists VALUES (3, 'John Coltrane', 'US', 90)"
+        )
+        duckdb_service.connection.execute("INSERT INTO track_artists VALUES ('t3', 3)")
+
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="verify_tracks",
+                arguments={"tracks": [{"title": "Blue Train", "artist": "John Coltrane"}]},
+            )
+        )
+
+        self.assertEqual(response["rows"][0]["catalog_track_id"], "t3")
+        self.assertEqual(response["rows"][0]["candidate_artist_match"], 1)
+
+    def test_track_verification_searches_optional_musicbrainz_index(self) -> None:
+        assert duckdb_service.connection is not None
+        duckdb_service.connection.execute(
+            """
+            CREATE TABLE musicbrainz_recordings (
+                recording_mbid VARCHAR,
+                title VARCHAR,
+                title_key VARCHAR,
+                artist VARCHAR,
+                duration_ms BIGINT
+            )
+            """
+        )
+        duckdb_service.connection.execute(
+            "INSERT INTO musicbrainz_recordings VALUES "
+            "('recording-1', 'Blue Train', 'bluetrain', 'John Coltrane', 640000)"
+        )
+        duckdb_service.musicbrainz_index_available = True
+
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="verify_tracks",
+                arguments={"tracks": [{"title": "Blue Train", "artist": "John Coltrane"}]},
+            )
+        )
+
+        musicbrainz_rows = [
+            row for row in response["rows"] if row["source"] == "musicbrainz"
+        ]
+        self.assertEqual(len(musicbrainz_rows), 1)
+        self.assertEqual(musicbrainz_rows[0]["catalog_track_id"], "mb:recording-1")
+        self.assertEqual(musicbrainz_rows[0]["candidate_artist_match"], 1)
 
     def test_compare_genres_returns_aggregate_statistics(self) -> None:
         response = duckdb_service.query_catalog(

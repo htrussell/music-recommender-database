@@ -9,8 +9,8 @@ usage() {
     cat <<'EOF'
 Usage: bash ./setup.sh [--skip-download] [--yes]
 
-Downloads the Kaggle CSVs, transforms them into the relational CSV tables,
-starts PostgreSQL, and loads the tables.
+Downloads the Kaggle CSVs, transforms them into canonical Parquet tables,
+starts PostgreSQL, and loads the derived tables.
 
 Options:
   --skip-download  Reuse the raw CSVs already in csv/
@@ -89,8 +89,8 @@ esac
 [[ -f "$VENV_PYTHON" ]] || fail "Could not find the virtual-environment Python at $VENV_PYTHON."
 export PATH="$VENV_BIN:$PATH"
 
-printf '%s\n' "Installing Kaggle CLI and CSV transformation dependency..."
-"$VENV_PYTHON" -m pip install --upgrade pip pandas kaggle
+printf '%s\n' "Installing Kaggle CLI and Parquet transformation dependencies..."
+"$VENV_PYTHON" -m pip install --upgrade pip pandas pyarrow kaggle psycopg2-binary
 
 if ((SKIP_DOWNLOAD)); then
     for source in dataset.csv album_ratings.csv artists.csv; do
@@ -109,12 +109,12 @@ else
     (cd "$ROOT_DIR/csv" && "$VENV_PYTHON" download-kaggle.py)
 fi
 
-printf '%s\n' "Transforming source CSVs into the eight relational tables..."
+printf '%s\n' "Transforming source CSVs into the eight canonical Parquet tables..."
 "$VENV_PYTHON" "$ROOT_DIR/transform_erd.py"
 
 for table in genre artists album tracks album_scores track_feel track_artists artist_genres; do
-    [[ -s "$ROOT_DIR/transformed/$table.csv" ]] ||
-        fail "Transformation did not produce transformed/$table.csv."
+    [[ -s "$ROOT_DIR/transformed/$table.parquet" ]] ||
+        fail "Transformation did not produce transformed/$table.parquet."
 done
 
 if ((!ASSUME_YES)); then
@@ -132,7 +132,7 @@ fi
 printf '%s\n' "Starting PostgreSQL..."
 docker compose up -d postgres
 
-printf '%s\n' "Loading transformed CSVs into PostgreSQL..."
+printf '%s\n' "Loading Parquet tables into PostgreSQL..."
 # -T disables pseudo-TTY allocation to prevent "the input device is not a TTY" errors in Git Bash (mintty)
 docker compose run --build --rm -T data-loader
 

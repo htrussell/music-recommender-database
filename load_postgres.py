@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from io import StringIO
 from pathlib import Path
 
+import duckdb
 import psycopg2
 
 
@@ -118,22 +119,22 @@ CREATE TABLE artist_genres (
 );
 """
 
-# Column order is checked against each generated CSV before the database is changed.
-TABLE_CSV_MAP = (
-    ("genre", "genre.csv", ("genre_id", "genre_name")),
+# Column order is checked against each generated Parquet file before the database is changed.
+TABLE_PARQUET_MAP = (
+    ("genre", "genre.parquet", ("genre_id", "genre_name")),
     (
         "artists",
-        "artists.csv",
+        "artists.parquet",
         ("artist_id", "artist_name", "artist_country", "artist_popularity"),
     ),
     (
         "album",
-        "album.csv",
+        "album.parquet",
         ("album_id", "genre_id", "album_name", "album_format", "release_date", "label"),
     ),
     (
         "tracks",
-        "tracks.csv",
+        "tracks.parquet",
         (
             "track_id",
             "album_id",
@@ -146,7 +147,7 @@ TABLE_CSV_MAP = (
     ),
     (
         "album_scores",
-        "album_scores.csv",
+        "album_scores.parquet",
         (
             "album_id",
             "metacritic_critic_score",
@@ -161,7 +162,7 @@ TABLE_CSV_MAP = (
     ),
     (
         "track_feel",
-        "track_feel.csv",
+        "track_feel.parquet",
         (
             "track_id",
             "danceability",
@@ -178,76 +179,98 @@ TABLE_CSV_MAP = (
             "time_signature",
         ),
     ),
-    ("track_artists", "track_artists.csv", ("track_id", "artist_id")),
-    ("artist_genres", "artist_genres.csv", ("artist_id", "genre_id")),
+    ("track_artists", "track_artists.parquet", ("track_id", "artist_id")),
+    ("artist_genres", "artist_genres.parquet", ("artist_id", "genre_id")),
 )
 
-INTEGER_CSV_COLUMNS = {
+INTEGER_PARQUET_COLUMNS = {
+    "genre": ("genre_id",),
+    "artists": ("artist_id",),
+    "album": ("album_id", "genre_id"),
+    "tracks": ("album_id", "genre_id", "popularity", "duration_ms"),
     "album_scores": (
+        "album_id",
         "metacritic_critic_count",
         "metacritic_user_count",
         "aoty_critic_count",
         "aoty_user_count",
     ),
+    "track_feel": ("key", "mode", "time_signature"),
+    "track_artists": ("artist_id",),
+    "artist_genres": ("artist_id", "genre_id"),
 }
 
 
-def validate_csv_files(csv_dir: Path) -> dict[str, Path]:
-    """Ensure every expected CSV exists and matches the loader's column order."""
-    csv_paths = {}
-    for table_name, filename, expected_columns in TABLE_CSV_MAP:
-        filepath = csv_dir / filename
+def validate_parquet_files(parquet_dir: Path) -> dict[str, Path]:
+    """Ensure every expected Parquet file exists and matches the loader schema."""
+    parquet_paths = {}
+    for table_name, filename, expected_columns in TABLE_PARQUET_MAP:
+        filepath = parquet_dir / filename
         if not filepath.is_file():
             raise FileNotFoundError(f"Required transformed data file not found: {filepath}")
 
-        with filepath.open("r", encoding="utf-8", newline="") as csv_file:
-            actual_columns = next(csv.reader(csv_file), None)
-        if tuple(actual_columns or ()) != expected_columns:
+        actual_columns = tuple(
+            row[0]
+            for row in duckdb.sql(
+                "DESCRIBE SELECT * FROM read_parquet(?)",
+                params=[str(filepath)],
+            ).fetchall()
+        )
+        if actual_columns != expected_columns:
             raise ValueError(
                 f"Unexpected columns in {filepath}: "
                 f"expected {expected_columns}, found {actual_columns}"
             )
-        csv_paths[table_name] = filepath
-    return csv_paths
+        parquet_paths[table_name] = filepath
+    return parquet_paths
 
 
-def prepare_csv_for_copy(filepath: Path, integer_columns: tuple[str, ...]) -> StringIO:
-    """Normalize integer-valued CSV cells that were exported with a decimal suffix."""
-    normalized_csv = StringIO(newline="")
-    with filepath.open("r", encoding="utf-8", newline="") as csv_file:
-        reader = csv.reader(csv_file)
-        header = next(reader)
-        column_indexes = {column: header.index(column) for column in integer_columns}
-        writer = csv.writer(normalized_csv, lineterminator="\n")
-        writer.writerow(header)
-
-        for line_number, row in enumerate(reader, start=2):
-            for column, index in column_indexes.items():
-                value = row[index]
-                if not value:
-                    continue
-                try:
-                    decimal_value = Decimal(value)
-                except InvalidOperation as exc:
-                    raise ValueError(
-                        f"Invalid integer value in {filepath}, line {line_number}, "
-                        f"column {column}: {value!r}"
-                    ) from exc
-                if not decimal_value.is_finite() or decimal_value != decimal_value.to_integral_value():
-                    raise ValueError(
-                        f"Non-integral value in {filepath}, line {line_number}, "
-                        f"column {column}: {value!r}"
-                    )
-                row[index] = str(int(decimal_value))
-            writer.writerow(row)
-
-    normalized_csv.seek(0)
-    return normalized_csv
+def copy_parquet_to_postgres(
+    cursor: psycopg2.extensions.cursor,
+    table_name: str,
+    filepath: Path,
+    columns: tuple[str, ...],
+    integer_columns: tuple[str, ...],
+) -> None:
+    """Stream Parquet rows to PostgreSQL in bounded CSV batches."""
+    connection = duckdb.connect()
+    try:
+        reader = connection.execute("SELECT * FROM read_parquet(?)", [str(filepath)])
+        integer_indexes = {columns.index(column) for column in integer_columns}
+        copy_sql = (
+            f"COPY {table_name} ({', '.join(columns)}) "
+            "FROM STDIN WITH (FORMAT CSV, NULL '')"
+        )
+        while rows := reader.fetchmany(10_000):
+            batch = StringIO(newline="")
+            writer = csv.writer(batch, lineterminator="\n")
+            for row_number, row in enumerate(rows, start=1):
+                normalized = list(row)
+                for index in integer_indexes:
+                    value = normalized[index]
+                    if value is None:
+                        continue
+                    try:
+                        decimal_value = Decimal(str(value))
+                    except InvalidOperation as exc:
+                        raise ValueError(
+                            f"Invalid integer value in {filepath}, batch row {row_number}: {value!r}"
+                        ) from exc
+                    if not decimal_value.is_finite() or decimal_value != decimal_value.to_integral_value():
+                        raise ValueError(
+                            f"Non-integral value in {filepath}, batch row {row_number}: {value!r}"
+                        )
+                    normalized[index] = int(decimal_value)
+                writer.writerow(["" if value is None else value for value in normalized])
+            batch.seek(0)
+            cursor.copy_expert(sql=copy_sql, file=batch)
+    finally:
+        connection.close()
 
 
 def main() -> None:
-    csv_dir = Path(__file__).resolve().parent / "transformed"
-    csv_paths = validate_csv_files(csv_dir)
+    parquet_dir = Path(__file__).resolve().parent / "transformed"
+    parquet_paths = validate_parquet_files(parquet_dir)
 
     print("Connecting to PostgreSQL...")
     with psycopg2.connect(**DB_PARAMS) as conn:
@@ -256,21 +279,15 @@ def main() -> None:
             cur.execute(DROP_STATEMENTS)
             cur.execute(DDL_STATEMENTS)
 
-            for table_name, _, columns in TABLE_CSV_MAP:
+            for table_name, _, columns in TABLE_PARQUET_MAP:
                 print(f"Loading data into {table_name}...")
-                column_list = ", ".join(columns)
-                copy_sql = (
-                    f"COPY {table_name} ({column_list}) "
-                    "FROM STDIN WITH (FORMAT CSV, HEADER TRUE, NULL '')"
+                copy_parquet_to_postgres(
+                    cur,
+                    table_name,
+                    parquet_paths[table_name],
+                    columns,
+                    INTEGER_PARQUET_COLUMNS.get(table_name, ()),
                 )
-                integer_columns = INTEGER_CSV_COLUMNS.get(table_name, ())
-                csv_context = (
-                    prepare_csv_for_copy(csv_paths[table_name], integer_columns)
-                    if integer_columns
-                    else csv_paths[table_name].open("r", encoding="utf-8", newline="")
-                )
-                with csv_context as csv_file:
-                    cur.copy_expert(sql=copy_sql, file=csv_file)
 
             cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", ("music_reader",))
             if cur.fetchone():

@@ -11,6 +11,8 @@ from main import (
     EMBEDDING_MODEL,
     MODEL,
     SQL_MODEL,
+    TrackIdentity,
+    TrackVerificationRequest,
     assistant_json,
     call_cloudflare_worker,
     clean_json,
@@ -18,6 +20,7 @@ from main import (
     fetch_catalog_for_request,
     generate_catalog_query,
     load_youtube_playlist,
+    verify_discovered_tracks,
     validate_read_query,
 )
 
@@ -237,7 +240,9 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertIn("db:<catalog_track_id>", ollama.call_args_list[1].args[0])
         self.assertIn("search_tracks", ollama.call_args_list[0].args[0])
         self.assertEqual(ollama.call_args_list[0].kwargs["model"], SQL_MODEL)
+        self.assertEqual(ollama.call_args_list[0].kwargs["max_tokens"], 384)
         self.assertEqual(ollama.call_args_list[1].kwargs["model"], MODEL)
+        self.assertEqual(ollama.call_args_list[1].kwargs["max_tokens"], 1200)
 
     def test_assistant_skips_catalog_query_for_small_talk(self) -> None:
         request = AssistantRequest(
@@ -260,6 +265,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         duckdb_query.assert_not_called()
         ollama.assert_called_once()
         self.assertEqual(ollama.call_args.kwargs["model"], CHAT_MODEL)
+        self.assertEqual(ollama.call_args.kwargs["max_tokens"], 512)
         self.assertNotIn("MUSIC CATALOG", ollama.call_args.args[1])
 
     def test_uses_postgres_when_tool_plan_requests_fallback(self) -> None:
@@ -410,6 +416,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 {"role": "user", "content": "Say hello."},
             ],
         )
+        self.assertEqual(worker.call_args.kwargs["json"]["max_tokens"], 1024)
         self.assertIn("music-rec-ai.htrussell.workers.dev", worker.call_args.args[0])
 
     def test_clean_json_extracts_object_from_surrounding_prose(self) -> None:
@@ -440,11 +447,407 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             worker.call_args.kwargs["json"],
             {
                 "model": CHAT_MODEL,
+                "max_tokens": 1024,
                 "messages": [
                     {"role": "system", "content": "Return JSON."},
                     {"role": "user", "content": "Say hello."},
                 ],
             },
+        )
+
+    def test_discovery_task_skips_catalog_planning_and_uses_discovery_token_limit(self) -> None:
+        request = AssistantRequest(
+            systemInstruction='Return JSON with a "tracks" array.',
+            userContent='Goal: "ambient music for reading"; Target Duration: 30 minutes',
+            task="discovery",
+        )
+        with (
+            patch("main.call_cloudflare_worker", return_value={"tracks": []}) as worker,
+            patch("main.fetch_catalog_for_request") as catalog,
+        ):
+            response = assistant_json(request)
+
+        self.assertEqual(response["result"], {"tracks": []})
+        self.assertEqual(response["catalog"], [])
+        self.assertEqual(response["catalog_source"], "none")
+        catalog.assert_not_called()
+        worker.assert_called_once()
+        self.assertEqual(worker.call_args.kwargs["model"], MODEL)
+        self.assertEqual(worker.call_args.kwargs["max_tokens"], 1400)
+
+    def test_playlist_recommendation_skips_redundant_catalog_planning(self) -> None:
+        request = AssistantRequest(
+            systemInstruction='Return JSON with a "recommendations" array.',
+            userContent="CANDIDATE POOL (Compact Format):\nID: playlist:1 | Sample - Artist",
+            task="recommendation",
+            skipCatalog=True,
+        )
+        with (
+            patch("main.fetch_catalog_for_request") as catalog,
+            patch(
+                "main.call_cloudflare_worker",
+                return_value={"recommendations": []},
+            ) as worker,
+        ):
+            response = assistant_json(request)
+
+        self.assertEqual(response["result"], {"recommendations": []})
+        self.assertEqual(response["catalog"], [])
+        self.assertEqual(response["catalog_source"], "none")
+        catalog.assert_not_called()
+        worker.assert_called_once()
+        self.assertEqual(worker.call_args.kwargs["model"], MODEL)
+
+    def test_discovered_track_verification_corrects_single_catalog_match(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": 17,
+                    "title": "Harvey",
+                    "artist": "Alex G",
+                    "duration_ms": 210000,
+                    "genre": "Indie",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 1.0,
+                    "artist_similarity": 0.2,
+                }
+            ],
+        ) as query:
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(tracks=[TrackIdentity(title="Harvey", artist="Tyler, The Creator")])
+            )
+
+        self.assertEqual(
+            result["tracks"],
+            [
+                {
+                    "catalog_track_id": 17,
+                    "title": "Harvey",
+                    "artist": "Alex G",
+                    "duration_ms": 210000,
+                    "genre": "Indie",
+                    "candidate_index": 0,
+                    "artist_corrected": True,
+                    "source": "primary",
+                }
+            ],
+        )
+        query.assert_called_once()
+
+    def test_discovered_track_verification_uses_best_candidate_for_ambiguous_title(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {"candidate_index": 0, "catalog_track_id": 1, "title": "Young", "artist": "Artist A", "candidate_artist_match": 0, "title_similarity": 1.0, "artist_similarity": 0.2, "popularity": 20},
+                {"candidate_index": 0, "catalog_track_id": 2, "title": "Young", "artist": "Artist B", "candidate_artist_match": 0, "title_similarity": 1.0, "artist_similarity": 0.4, "popularity": 10},
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(tracks=[TrackIdentity(title="Young", artist="Unknown Artist")])
+            )
+
+        self.assertEqual(len(result["tracks"]), 1)
+        self.assertEqual(result["tracks"][0]["catalog_track_id"], 2)
+
+    def test_discovered_track_verification_uses_exact_musicbrainz_artist(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "local-1",
+                    "title": "Blue Train",
+                    "artist": "Other Artist",
+                    "candidate_artist_match": 0,
+                    "source": "primary",
+                },
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "mb:recording-1",
+                    "title": "Blue Train",
+                    "artist": "John Coltrane",
+                    "duration_ms": 640000,
+                    "candidate_artist_match": 1,
+                    "source": "musicbrainz",
+                },
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="Blue Train", artist="John Coltrane")]
+                )
+            )
+
+        self.assertEqual(len(result["tracks"]), 1)
+        self.assertEqual(result["tracks"][0]["catalog_track_id"], "mb:recording-1")
+        self.assertFalse(result["tracks"][0]["artist_corrected"])
+        self.assertEqual(result["tracks"][0]["source"], "musicbrainz")
+
+    def test_discovered_track_verification_accepts_close_title_and_artist_matches(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-1",
+                    "title": "Blue Train",
+                    "artist": "Alice",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 0.94,
+                    "artist_similarity": 0.96,
+                    "source": "primary",
+                }
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="Blue Trane", artist="Alyce")]
+                )
+            )
+
+        self.assertEqual(len(result["tracks"]), 1)
+        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
+        self.assertTrue(result["tracks"][0]["artist_corrected"])
+
+    def test_discovered_track_verification_allows_strong_unique_title_with_wrong_artist(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-1",
+                    "title": "Blue Train",
+                    "artist": "Alice",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 0.94,
+                    "artist_similarity": 0.12,
+                    "source": "primary",
+                }
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="Blue Trane", artist="Unknown Artist")]
+                )
+            )
+
+        self.assertEqual(len(result["tracks"]), 1)
+        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
+        self.assertTrue(result["tracks"][0]["artist_corrected"])
+
+    def test_discovered_track_verification_rejects_weak_title_and_artist_match(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-1",
+                    "title": "A Different Song",
+                    "artist": "Another Artist",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 0.66,
+                    "artist_similarity": 0.2,
+                }
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="Requested Song", artist="Requested Artist")]
+                )
+            )
+
+        self.assertEqual(result["tracks"], [])
+
+    def test_discovered_track_verification_selects_best_ambiguous_fuzzy_candidate(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-1",
+                    "title": "Blue Train",
+                    "artist": "Alice",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 0.94,
+                    "artist_similarity": 0.94,
+                },
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-2",
+                    "title": "Blue Trane",
+                    "artist": "Alyce",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 0.95,
+                    "artist_similarity": 0.95,
+                },
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="Blue Trains", artist="Alycee")]
+                )
+            )
+
+        self.assertEqual(len(result["tracks"]), 1)
+        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-2")
+
+    def test_discovered_track_verification_accepts_loose_title_match_with_wrong_artist(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-1",
+                    "title": "Blue Train",
+                    "artist": "Alice",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 0.83,
+                    "artist_similarity": 0.12,
+                }
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="Blue Trains", artist="Unknown Artist")]
+                )
+            )
+
+        self.assertEqual(len(result["tracks"]), 1)
+        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
+
+    def test_discovered_track_verification_accepts_low_title_similarity_with_exact_artist(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-1",
+                    "title": "Blue Train",
+                    "artist": "Alice",
+                    "candidate_artist_match": 1,
+                    "title_similarity": 0.64,
+                    "artist_similarity": 1.0,
+                }
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="B Trin", artist="Alice")]
+                )
+            )
+
+        self.assertEqual(len(result["tracks"]), 1)
+        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
+
+    def test_chat_retries_with_recommendation_model_when_completion_is_empty(self) -> None:
+        request = AssistantRequest(
+            systemInstruction="Return a conversational JSON reply.",
+            userContent="What kind of music might fit my goal?",
+            task="chat",
+        )
+        with (
+            patch("main.fetch_catalog_for_request", return_value=([], "none")),
+            patch(
+                "main.call_cloudflare_worker",
+                side_effect=[
+                    HTTPException(
+                        status_code=502,
+                        detail="Cloudflare AI Worker returned a completion without message content.",
+                    ),
+                    {
+                        "reply": "Let’s explore a few styles that fit your goal.",
+                        "extracted_taste_insights": [],
+                        "suggested_recommender_action": None,
+                    },
+                ],
+            ) as worker,
+        ):
+            response = assistant_json(request)
+
+        self.assertIn("explore", response["result"]["reply"])
+        self.assertEqual(worker.call_count, 2)
+        self.assertEqual(worker.call_args_list[0].kwargs["model"], CHAT_MODEL)
+        self.assertEqual(worker.call_args_list[1].kwargs["model"], MODEL)
+
+    def test_recommendation_retries_with_chat_model_when_completion_is_empty(self) -> None:
+        request = AssistantRequest(
+            systemInstruction="Return playlist recommendations as JSON.",
+            userContent="Recommend songs for a calm evening.",
+            task="recommendation",
+        )
+        with (
+            patch("main.fetch_catalog_for_request", return_value=([], "none")),
+            patch(
+                "main.call_cloudflare_worker",
+                side_effect=[
+                    HTTPException(
+                        status_code=502,
+                        detail="Cloudflare AI Worker returned a completion without message content.",
+                    ),
+                    {"recommendations": []},
+                ],
+            ) as worker,
+        ):
+            response = assistant_json(request)
+
+        self.assertEqual(response["result"], {"recommendations": []})
+        self.assertEqual(worker.call_count, 2)
+        self.assertEqual(worker.call_args_list[0].kwargs["model"], MODEL)
+        self.assertEqual(worker.call_args_list[1].kwargs["model"], CHAT_MODEL)
+        self.assertEqual(worker.call_args_list[1].kwargs["max_tokens"], 1200)
+        self.assertFalse(worker.call_args_list[1].kwargs["allow_plain_text"])
+
+    def test_recommendation_retries_with_strict_json_instruction_on_invalid_json(self) -> None:
+        request = AssistantRequest(
+            systemInstruction='Return playlist recommendations as JSON with a "recommendations" array.',
+            userContent="Recommend songs for a calm evening.",
+            task="recommendation",
+        )
+        invalid_json = HTTPException(
+            status_code=502,
+            detail="AI provider did not return a JSON object. Response began: 'Here are some songs'",
+        )
+        with (
+            patch("main.fetch_catalog_for_request", return_value=([], "none")),
+            patch(
+                "main.call_cloudflare_worker",
+                side_effect=[invalid_json, {"recommendations": []}],
+            ) as worker,
+        ):
+            response = assistant_json(request)
+
+        self.assertEqual(response["result"], {"recommendations": []})
+        self.assertEqual(worker.call_count, 2)
+        self.assertEqual(worker.call_args_list[0].kwargs["model"], MODEL)
+        self.assertEqual(worker.call_args_list[1].kwargs["model"], CHAT_MODEL)
+        self.assertIn("previous model did not return a valid JSON object", worker.call_args_list[1].args[0])
+
+    def test_empty_completions_from_every_worker_model_return_clear_error(self) -> None:
+        request = AssistantRequest(
+            systemInstruction="Return playlist recommendations as JSON.",
+            userContent="Recommend songs for a calm evening.",
+            task="recommendation",
+        )
+        empty_completion = HTTPException(
+            status_code=502,
+            detail="Cloudflare AI Worker returned a completion without message content.",
+        )
+        with (
+            patch("main.fetch_catalog_for_request", return_value=([], "none")),
+            patch(
+                "main.call_cloudflare_worker",
+                side_effect=[empty_completion, empty_completion],
+            ) as worker,
+        ):
+            with self.assertRaises(HTTPException) as error:
+                assistant_json(request)
+
+        self.assertIn("all tried models: llama, glm", error.exception.detail)
+        self.assertEqual(
+            [call.kwargs["model"] for call in worker.call_args_list],
+            [MODEL, CHAT_MODEL],
         )
 
     def test_cloudflare_worker_accepts_object_result(self) -> None:
@@ -518,6 +921,32 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 "suggested_recommender_action": None,
             },
         )
+
+    def test_cloudflare_chat_surfaces_empty_completion_for_model_fallback(self) -> None:
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {
+                "result": {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "reasoning": "Internal reasoning is not a user-facing reply.",
+                            }
+                        }
+                    ]
+                }
+            }
+            with self.assertRaises(HTTPException) as error:
+                call_cloudflare_worker(
+                    "Return a JSON response.",
+                    "Say hello.",
+                    model=CHAT_MODEL,
+                    allow_plain_text=True,
+                )
+
+        self.assertEqual(error.exception.status_code, 502)
+        self.assertIn("without message content", error.exception.detail)
 
     def test_cloudflare_worker_surfaces_provider_error_details(self) -> None:
         response = httpx.Response(

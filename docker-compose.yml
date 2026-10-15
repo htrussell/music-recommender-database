@@ -56,8 +56,10 @@ services:
     command: ["uvicorn", "duckdb_service:app", "--host", "0.0.0.0", "--port", "8001"]
     environment:
       MUSIC_DATA_DIR: /data/transformed
+      MUSICBRAINZ_PARQUET: /data/musicbrainz/recordings.parquet
     volumes:
       - ./transformed:/data/transformed:ro
+      - ./musicbrainz:/data/musicbrainz:ro
     networks:
       - music-network
     healthcheck:
