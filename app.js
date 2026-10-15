@@ -579,17 +579,41 @@
             }
         }
 
-        async function requestOllamaJson(systemInstruction, userContent) {
+        async function requestOllamaJson(systemInstruction, userContent, task = "recommendation") {
             const response = await fetch("/api/ai/json", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ systemInstruction, userContent })
+                body: JSON.stringify({ systemInstruction, userContent, task })
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail || `Local recommendation service HTTP ${response.status}`);
             if (!data.result || typeof data.result !== "object") throw new Error("Local recommendation service returned an invalid response.");
             if (Array.isArray(data.catalog)) mergeDatabaseCatalogRows(data.catalog);
             return data.result;
+        }
+
+        function normalizeRecommendations(recommendations) {
+            if (recommendations === undefined || recommendations === null) return [];
+            let normalized;
+            if (Array.isArray(recommendations)) {
+                normalized = recommendations;
+            } else if (
+                typeof recommendations === "object" &&
+                !Array.isArray(recommendations) &&
+                recommendations.content_id !== undefined
+            ) {
+                normalized = [recommendations];
+            } else {
+                throw new Error("Local recommendation service returned recommendations in an invalid format.");
+            }
+            if (normalized.some(recommendation =>
+                !recommendation ||
+                typeof recommendation !== "object" ||
+                (typeof recommendation.content_id !== "string" && typeof recommendation.content_id !== "number")
+            )) {
+                throw new Error("Local recommendation service returned an invalid recommendation entry.");
+            }
+            return normalized;
         }
 
         async function fetchExternalDiscoveryTracks({ goalText, budgetMins, preferredTopics, excludedTopics, existingIds }) {
@@ -856,7 +880,8 @@ ${compactCatalogPrompt}
             try {
                 let parsedData = await requestOllamaJson(systemPrompt, userPrompt);
                 
-                let currentRecs = parsedData.recommendations || [];
+                let currentRecs = normalizeRecommendations(parsedData.recommendations);
+                parsedData.recommendations = currentRecs;
                 let currentDuration = currentRecs.reduce((sum, rec) => {
                     const item = CATALOG_ITEMS.find(c => c.id === rec.content_id);
                     return sum + (item ? (item.duration || 4) : 4);
@@ -865,7 +890,6 @@ ${compactCatalogPrompt}
                 const targetMinDuration = Math.floor(budgetMins * 0.8);
 
                 const needsPromptExpansion = 
-                    !isPlaylistGrounded ||
                     parsedData.status === "outside_discovery" ||
                     parsedData.status === "needs_prompt_expansion" ||
                     parsedData.status === "no_match" ||
@@ -1012,7 +1036,7 @@ ${compactCatalogPrompt}
             const queueList = document.getElementById("queueList");
             let totalDuration = 0;
             let containsExcludedItem = false;
-            const recommendations = data.recommendations || [];
+            const recommendations = normalizeRecommendations(data.recommendations);
             rememberRecommendedIds(recommendations);
 
             if (!recommendations.length) {
@@ -1097,7 +1121,7 @@ ${compactCatalogPrompt}
                 excluded_topics: data.excluded_topics || [],
                 budget_minutes: requestedBudget,
                 ai_comment: data.ai_comment || "",
-                recommendations: (data.recommendations || []).map(r => {
+                recommendations: recommendations.map(r => {
                     const found = CATALOG_ITEMS.find(c => c.id === r.content_id);
                     return {
                         id: r.content_id,
@@ -1327,6 +1351,7 @@ CURRENT RECOMMENDER & SESSION CONTEXT:
 - Listener-Approved Taste Summary: "${listenerTasteSummary}"
 - Listener-Provided Preferences: "${listenerPreferences}"
 - Current Active Queue Recommendations: ${JSON.stringify(currentQueueSnapshot.map(t => ({ title: t.title, artist: t.artist, duration: t.duration, reason: t.reason })))}
+- Treat the active queue above as authoritative context. An empty database search does not mean the queue is empty; use the actual queue items to answer questions about these recommendations.
 - Existing Discovered Taste Notes: ${JSON.stringify(CHAT_TASTE_INSIGHTS)}
 
 MANDATORY RULES:
@@ -1351,12 +1376,20 @@ Return valid JSON strictly matching this schema:
 CONVERSATION HISTORY:
 ${recentHistory || "No previous messages."}
 
+ACTIVE QUEUE ITEMS (authoritative; answer queue questions from these exact items):
+${JSON.stringify(currentQueueSnapshot.map(t => ({
+                title: t.title,
+                artist: t.artist,
+                duration: t.duration,
+                reason: t.reason
+            })))}
+
 NEW LISTENER MESSAGE:
 "${userText}"
 `;
 
             try {
-                const response = await requestOllamaJson(systemInstruction, chatPrompt);
+                const response = await requestOllamaJson(systemInstruction, chatPrompt, "chat");
                 
                 CHAT_HISTORY.push({ role: "user", text: userText });
                 CHAT_HISTORY.push({ role: "assistant", text: response.reply });

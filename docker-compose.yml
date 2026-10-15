@@ -22,6 +22,9 @@ services:
     environment:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: lfm2.5-thinking:latest
+      OLLAMA_CHAT_MODEL: hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M
+      OLLAMA_SQL_MODEL: qwen2.5-coder:1.5b
+      DUCKDB_URL: http://duckdb:8001
       MUSIC_ADMIN_DSN: dbname=track-db user=airflow password=airflow host=postgres port=5432
       MUSIC_READER_PASSWORD: ${MUSIC_READER_PASSWORD:-music_reader_local_dev}
     networks:
@@ -39,8 +42,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      duckdb:
+        condition: service_started
       ollama-model:
         condition: service_completed_successfully
+
+  duckdb:
+    build:
+      context: ./backend
+    container_name: music-recommender-duckdb
+    command: ["uvicorn", "duckdb_service:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      MUSIC_DATA_DIR: /data/transformed
+    volumes:
+      - ./transformed:/data/transformed:ro
+    networks:
+      - music-network
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=4)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
@@ -254,7 +281,11 @@ services:
 
   ollama-model:
     image: ollama/ollama:latest
-    command: ["pull", "lfm2.5-thinking:latest"]
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      ollama pull lfm2.5-thinking:latest &&
+      ollama pull hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M &&
+      ollama pull qwen2.5-coder:1.5b
     environment:
       OLLAMA_HOST: http://ollama:11434
     restart: "no"
