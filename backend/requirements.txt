@@ -1,5 +1,7 @@
 fastapi==0.115.12
+duckdb==1.2.2
 httpx==0.28.1
 psycopg2-binary==2.9.10
 sqlglot==26.16.4
 uvicorn[standard]==0.34.0
+yt-dlp==2026.8.19

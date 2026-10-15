@@ -264,39 +264,6 @@
                 .trim();
         }
 
-        function extractPlaylistId(input) {
-            if (!input) return "";
-            input = input.trim();
-            if (input.includes("youtube.com") || input.includes("youtu.be")) {
-                try {
-                    const parsed = new URL(input);
-                    const listParam = parsed.searchParams.get("list");
-                    if (listParam) return listParam;
-                } catch {
-                    const match = input.match(/[?&]list=([^&#]+)/);
-                    if (match) return match[1];
-                }
-            }
-            return input;
-        }
-
-        function getYouTubeRequestConfig(tokenOrKey, url) {
-            const isApiKey = !tokenOrKey.startsWith("ya29.") && !tokenOrKey.toLowerCase().startsWith("bearer ");
-            if (isApiKey) {
-                const separator = url.includes("?") ? "&" : "?";
-                return {
-                    url: `${url}${separator}key=${encodeURIComponent(tokenOrKey.trim())}`,
-                    headers: {}
-                };
-            } else {
-                const cleanToken = tokenOrKey.replace(/^Bearer\s+/i, "").trim();
-                return {
-                    url: url,
-                    headers: { Authorization: `Bearer ${cleanToken}` }
-                };
-            }
-        }
-
         function normalizePlaylistJson(data, source, fallbackName) {
             const tracks = Array.isArray(data) ? data : data?.tracks;
             if (!Array.isArray(tracks) || !tracks.length) {
@@ -445,81 +412,35 @@
             URL.revokeObjectURL(url);
         }
 
-        async function fetchYouTubeJson(tokenOrKey, url) {
-            const config = getYouTubeRequestConfig(tokenOrKey, url);
-            const response = await fetch(config.url, { headers: config.headers });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error?.message || `YouTube API HTTP ${response.status}`);
-            return data;
-        }
-
         async function loadYouTubePlaylist() {
             if (!hasListenerConsent()) return;
-            const tokenOrKey = document.getElementById("youtubeTokenInput").value.trim();
-            const playlistId = extractPlaylistId(document.getElementById("youtubePlaylistIdInput").value.trim());
+            const playlistUrl = document.getElementById("youtubePlaylistIdInput").value.trim();
             const status = document.getElementById("youtubeAuthStatus");
             const button = document.getElementById("loadYoutubeBtn");
 
-            if (!tokenOrKey || !playlistId) {
-                showToast("Enter a YouTube API key/access token and a YouTube playlist URL or ID.", "warning");
-                return;
-            }
-            if (!/^[A-Za-z0-9_-]+$/.test(playlistId)) {
-                showToast("Enter a valid YouTube playlist URL or playlist ID.", "warning");
+            if (!playlistUrl) {
+                showToast("Enter a public YouTube playlist URL.", "warning");
                 return;
             }
 
             button.disabled = true;
             button.classList.add("opacity-50", "cursor-not-allowed");
-            status.textContent = "Fetching YouTube playlist and converting it to normalized JSON...";
+            status.textContent = "Reading the public playlist and converting it to normalized JSON...";
             status.className = "text-[10px] text-blue-400 mt-1";
             try {
-                const details = await fetchYouTubeJson(tokenOrKey,
-                    `https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${encodeURIComponent(playlistId)}`);
-                const playlistName = details.items?.[0]?.snippet?.title || `YouTube playlist ${playlistId}`;
-                const playlistEntries = [];
-                let pageToken = "";
-                do {
-                    const params = new URLSearchParams({
-                        part: "snippet,contentDetails",
-                        playlistId,
-                        maxResults: "50"
-                    });
-                    if (pageToken) params.set("pageToken", pageToken);
-                    const page = await fetchYouTubeJson(tokenOrKey,
-                        `https://www.googleapis.com/youtube/v3/playlistItems?${params}`);
-                    playlistEntries.push(...(page.items || []));
-                    pageToken = page.nextPageToken || "";
-                } while (pageToken);
-
-                const videoIds = playlistEntries.map(entry => entry.contentDetails?.videoId).filter(Boolean);
-                if (!videoIds.length) throw new Error("No accessible videos were found in that playlist.");
-                const videosById = new Map();
-                for (let index = 0; index < videoIds.length; index += 50) {
-                    const params = new URLSearchParams({ part: "snippet,contentDetails", id: videoIds.slice(index, index + 50).join(",") });
-                    const page = await fetchYouTubeJson(tokenOrKey, `https://www.googleapis.com/youtube/v3/videos?${params}`);
-                    for (const video of page.items || []) videosById.set(video.id, video);
-                }
-                const tracks = playlistEntries.flatMap(entry => {
-                    const video = videosById.get(entry.contentDetails?.videoId);
-                    if (!video?.snippet) return [];
-                    const thumbnails = video.snippet.thumbnails || {};
-                    return [{
-                        id: video.id,
-                        title: video.snippet.title,
-                        artist: video.snippet.channelTitle || "Unknown artist",
-                        durationSeconds: parseDurationSeconds(video.contentDetails?.duration || "PT0S"),
-                        url: `https://www.youtube.com/watch?v=${encodeURIComponent(video.id)}`,
-                        cover: thumbnails.standard?.url || thumbnails.high?.url || thumbnails.medium?.url || thumbnails.default?.url || "",
-                        tags: ["already-on-playlist", ...(video.snippet.tags || [])]
-                    }];
+                const response = await fetch("/api/playlist/youtube", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ playlistUrl })
                 });
-                if (!tracks.length) throw new Error("The playlist contains no accessible video details.");
+                const playlist = await response.json();
+                if (!response.ok) throw new Error(playlist.detail || `Playlist import HTTP ${response.status}`);
 
-                setPlaylistReview({ source: "youtube", playlistName, playlistId, tracks });
+                setPlaylistReview(playlist);
+                const tracks = playlist.tracks || [];
                 status.textContent = `Found ${tracks.length} videos. Review the normalized playlist before using it.`;
                 status.className = "text-[10px] text-emerald-400 mt-1";
-                showToast(`Converted "${playlistName}" to normalized playlist JSON. Review it before use.`, "success");
+                showToast(`Converted "${playlist.playlistName}" to normalized playlist JSON. Review it before use.`, "success");
             } catch (err) {
                 console.error("YouTube playlist import failed:", err);
                 status.textContent = `Import failed: ${err.message}`;
@@ -577,7 +498,6 @@
                 sessionStorage.removeItem("goalModeListenerProfile");
                 sessionStorage.removeItem("goalModeListenerConsent");
                 sessionStorage.removeItem("goalModePreviouslyRecommended");
-                sessionStorage.removeItem("goalModeVerifiedCovers");
             } catch (err) {
                 showToast(`Could not clear saved listener data: ${err.message}`, "error");
                 return;
@@ -587,7 +507,7 @@
             document.getElementById("listenerExplicitPreferences").value = "";
             document.getElementById("profileSaveStatus").textContent = "Not saved";
             document.getElementById("playlistReviewPanel").classList.add("hidden");
-            document.getElementById("youtubeAuthStatus").textContent = "Playlist URLs require a YouTube Data API key or access token. Both imports are normalized to the same JSON format.";
+            document.getElementById("youtubeAuthStatus").textContent = "No API key needed. Public playlists are imported by the local backend.";
             PENDING_PLAYLIST = null;
             NORMALIZED_PLAYLIST = null;
             PLAYLIST_ITEMS = [];
@@ -618,160 +538,82 @@
             sessionStorage.setItem("goalModePreviouslyRecommended", JSON.stringify([...ids]));
         }
 
-        function extractLastfmImage(imageArray) {
-            if (!Array.isArray(imageArray) || !imageArray.length) return "";
-            const priorities = ["extralarge", "large", "medium", "small"];
-            for (const size of priorities) {
-                const imgObj = imageArray.find(i => i.size === size);
-                const url = imgObj?.["#text"]?.trim();
-                if (url && url.startsWith("http") && !url.includes("2a96cbd8b46e442fc41c2b86b821562f")) {
-                    return url;
-                }
-            }
-            for (const item of imageArray) {
-                const url = item?.["#text"]?.trim();
-                if (url && url.startsWith("http") && !url.includes("2a96cbd8b46e442fc41c2b86b821562f")) {
-                    return url;
-                }
-            }
-            return "";
-        }
+        function mergeDatabaseCatalogRows(rows) {
+            let added = 0;
+            for (const row of rows) {
+                if (!row || typeof row !== "object") continue;
+                const rawId = row.catalog_track_id ?? row.track_id ?? row.id;
+                const title = row.title ?? row.track_name;
+                const artist = row.artist ?? row.artist_name;
+                if (rawId === undefined || !title || !artist) continue;
 
-        function loadCoverAsync(imgElement, artist, title, lastfmApiKey) {
-            if (!imgElement || !artist || !title) return;
-            resolveTrackCover(artist, title, lastfmApiKey).then(url => {
-                if (url && imgElement) {
-                    imgElement.src = url;
-                }
-            }).catch(() => {});
-        }
-
-        function fetchItunesArtwork(artist, track) {
-            return new Promise((resolve) => {
-                const callbackName = "itunes_art_" + Math.random().toString(36).substring(2, 9);
-                const script = document.createElement("script");
-                let timedOut = false;
-                const timer = setTimeout(() => {
-                    timedOut = true;
-                    cleanup();
-                    resolve(null);
-                }, 3500);
-
-                function cleanup() {
-                    clearTimeout(timer);
-                    try { delete window[callbackName]; } catch {}
-                    if (script.parentNode) script.parentNode.removeChild(script);
+                const id = `db:${rawId}`;
+                if (CATALOG_ITEMS.some(item => item.id === id)) continue;
+                const durationMs = Number(row.duration_ms);
+                const duration = Number.isFinite(durationMs) && durationMs > 0
+                    ? Math.max(1, Math.ceil(durationMs / 60000))
+                    : 4;
+                const tags = ["music-catalog"];
+                for (const field of ["genre", "energy", "valence", "danceability", "acousticness", "instrumentalness", "tempo"]) {
+                    const value = row[field];
+                    if (value !== undefined && value !== null && value !== "") tags.push(`${field}:${value}`);
                 }
 
-                window[callbackName] = function(data) {
-                    if (timedOut) return;
-                    cleanup();
-                    const rawArt = data?.results?.[0]?.artworkUrl100;
-                    if (rawArt) {
-                        const hiResArt = rawArt.replace("100x100bb", "300x300bb").replace("100x100", "300x300");
-                        resolve(hiResArt);
-                    } else {
-                        resolve(null);
-                    }
-                };
-
-                script.onerror = () => {
-                    if (timedOut) return;
-                    cleanup();
-                    resolve(null);
-                };
-
-                const cleanQuery = `${artist} ${track}`.replace(/[\(\)\[\]\-]/g, " ").replace(/\s+/g, " ").trim();
-                script.src = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQuery)}&entity=song&limit=1&callback=${callbackName}`;
-                document.head.appendChild(script);
-            });
-        }
-
-        async function resolveTrackCover(artist, title, lastfmApiKey) {
-            const cacheKey = `${artist}:${title}`.toLowerCase();
-            const cachedCovers = JSON.parse(sessionStorage.getItem("goalModeVerifiedCovers") || "{}");
-            if (cachedCovers[cacheKey]) return cachedCovers[cacheKey];
-
-            let coverUrl = "";
-
-            if (lastfmApiKey) {
-                try {
-                    const params = new URLSearchParams({
-                        method: "track.getInfo",
-                        api_key: lastfmApiKey,
-                        artist: artist,
-                        track: title,
-                        autocorrect: "1",
-                        format: "json"
-                    });
-                    const res = await fetch(`https://ws.audioscrobbler.com/2.0/?${params}`);
-                    const data = await res.json();
-                    coverUrl = extractLastfmImage(data.track?.album?.image);
-
-                    if (!coverUrl && data.track?.album?.title) {
-                        const albumParams = new URLSearchParams({
-                            method: "album.getInfo",
-                            api_key: lastfmApiKey,
-                            artist: data.track.album.artist || artist,
-                            album: data.track.album.title,
-                            autocorrect: "1",
-                            format: "json"
-                        });
-                        const albumRes = await fetch(`https://ws.audioscrobbler.com/2.0/?${albumParams}`);
-                        const albumData = await albumRes.json();
-                        coverUrl = extractLastfmImage(albumData.album?.image);
-                    }
-                } catch {
-                    // Fall back cleanly
-                }
-            }
-
-            if (!coverUrl) {
-                try {
-                    coverUrl = (await fetchItunesArtwork(artist, title)) || "";
-                } catch {
-                    // Fall back cleanly
-                }
-            }
-
-            if (coverUrl) {
-                cachedCovers[cacheKey] = coverUrl;
-                sessionStorage.setItem("goalModeVerifiedCovers", JSON.stringify(cachedCovers));
-            }
-
-            return coverUrl;
-        }
-
-        async function enrichCandidateCoversProgressively(lastfmApiKey) {
-            if (!CATALOG_ITEMS || !CATALOG_ITEMS.length) return;
-            const itemsToFetch = CATALOG_ITEMS.slice(0, 60);
-            const concurrency = 5;
-            for (let i = 0; i < itemsToFetch.length; i += concurrency) {
-                const chunk = itemsToFetch.slice(i, i + concurrency);
-                await Promise.all(chunk.map(async item => {
-                    if (item.cover && !item.cover.includes("placehold.co")) return;
-                    const cover = await resolveTrackCover(item.artist, item.title, lastfmApiKey);
-                    if (cover) {
-                        item.cover = cover;
-                        const imgEl = Array.from(document.querySelectorAll("img[data-catalog-id]")).find(el => el.getAttribute("data-catalog-id") === item.id);
-                        if (imgEl) {
-                            imgEl.src = cover;
-                        }
-                    }
-                }));
-            }
-        }
-
-        async function requestOllamaJson(systemInstruction, userContent) {
-            const response = await fetch("/api/ai/json", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ systemInstruction, userContent })
+                CATALOG_ITEMS.unshift({
+                    id,
+                    title: String(title),
+                    artist: String(artist),
+                    category: "Music",
+                    duration,
+                    durationSeconds: durationMs > 0 ? Math.round(durationMs / 1000) : duration * 60,
+                    cover: "",
+                    tags,
+                    catalogMetadata: row
                 });
+                added += 1;
+            }
+            if (added) {
+                document.getElementById("catalogStatus").textContent =
+                    `${CATALOG_ITEMS.length} candidate songs (${added} matched from music database)`;
+                renderCatalogTable();
+            }
+        }
+
+        async function requestOllamaJson(systemInstruction, userContent, task = "recommendation") {
+            const response = await fetch("/api/ai/json", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ systemInstruction, userContent, task })
+            });
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail || `Local recommendation service HTTP ${response.status}`);
             if (!data.result || typeof data.result !== "object") throw new Error("Local recommendation service returned an invalid response.");
+            if (Array.isArray(data.catalog)) mergeDatabaseCatalogRows(data.catalog);
             return data.result;
+        }
+
+        function normalizeRecommendations(recommendations) {
+            if (recommendations === undefined || recommendations === null) return [];
+            let normalized;
+            if (Array.isArray(recommendations)) {
+                normalized = recommendations;
+            } else if (
+                typeof recommendations === "object" &&
+                !Array.isArray(recommendations) &&
+                recommendations.content_id !== undefined
+            ) {
+                normalized = [recommendations];
+            } else {
+                throw new Error("Local recommendation service returned recommendations in an invalid format.");
+            }
+            if (normalized.some(recommendation =>
+                !recommendation ||
+                typeof recommendation !== "object" ||
+                (typeof recommendation.content_id !== "string" && typeof recommendation.content_id !== "number")
+            )) {
+                throw new Error("Local recommendation service returned an invalid recommendation entry.");
+            }
+            return normalized;
         }
 
         async function fetchExternalDiscoveryTracks({ goalText, budgetMins, preferredTopics, excludedTopics, existingIds }) {
@@ -817,13 +659,9 @@ Previously Recommended / Existing IDs to avoid: ${JSON.stringify((existingIds ||
                     throw new Error("Ollama's discovery response did not include a tracks array.");
                 }
                 
-                const cachedCovers = JSON.parse(sessionStorage.getItem("goalModeVerifiedCovers") || "{}");
-                
                 return result.tracks.map(track => {
                     const id = `discovered:${normalizeSongKey(track.artist + " " + track.title)}`;
                     const durationMins = Math.min(25, Math.max(1, parseInt(track.duration_minutes) || 4));
-                    const cacheKey = `${track.artist}:${track.title}`.toLowerCase();
-                    const cover = cachedCovers[cacheKey] || `https://placehold.co/120x120/1e293b/a855f7?text=Prompt+Match`;
 
                     return {
                         id: id,
@@ -832,7 +670,7 @@ Previously Recommended / Existing IDs to avoid: ${JSON.stringify((existingIds ||
                         category: "Music",
                         duration: durationMins,
                         durationSeconds: durationMins * 60,
-                        cover: cover,
+                        cover: "",
                         tags: ["outside-discovery", "prompt-curated", ...(track.tags || [])],
                         reason: track.reason,
                         isDiscoveredMatch: true
@@ -883,7 +721,6 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                     throw new Error("Ollama's budget response did not include a tracks array.");
                 }
                 
-                const cachedCovers = JSON.parse(sessionStorage.getItem("goalModeVerifiedCovers") || "{}");
                 let accumulatedMinutes = 0;
                 const fillerTracks = [];
 
@@ -893,9 +730,6 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                     accumulatedMinutes += dur;
 
                     const id = `filler:${normalizeSongKey(track.artist + " " + track.title)}`;
-                    const cacheKey = `${track.artist}:${track.title}`.toLowerCase();
-                    const cover = cachedCovers[cacheKey] || `https://placehold.co/120x120/1e293b/06b6d4?text=Budget+Fill`;
-
                     fillerTracks.push({
                         id: id,
                         title: track.title,
@@ -903,7 +737,7 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                         category: "Music",
                         duration: dur,
                         durationSeconds: dur * 60,
-                        cover: cover,
+                        cover: "",
                         tags: ["budget-filler", "prompt-curated", ...(track.tags || [])],
                         reason: track.reason,
                         isBudgetFiller: true
@@ -946,8 +780,6 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                     });
                     document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} candidate songs (${discovered.length} loaded from prompt)`;
                     renderCatalogTable();
-                    const lastfmApiKey = document.getElementById("lastfmApiKeyInput").value.trim();
-                    enrichCandidateCoversProgressively(lastfmApiKey);
                     showToast(`Loaded ${discovered.length} songs for "${goalText}" into candidate catalog!`, "success");
                 } else {
                     showToast("Ollama did not find any new matching tracks.", "warning");
@@ -1048,7 +880,8 @@ ${compactCatalogPrompt}
             try {
                 let parsedData = await requestOllamaJson(systemPrompt, userPrompt);
                 
-                let currentRecs = parsedData.recommendations || [];
+                let currentRecs = normalizeRecommendations(parsedData.recommendations);
+                parsedData.recommendations = currentRecs;
                 let currentDuration = currentRecs.reduce((sum, rec) => {
                     const item = CATALOG_ITEMS.find(c => c.id === rec.content_id);
                     return sum + (item ? (item.duration || 4) : 4);
@@ -1057,7 +890,6 @@ ${compactCatalogPrompt}
                 const targetMinDuration = Math.floor(budgetMins * 0.8);
 
                 const needsPromptExpansion = 
-                    !isPlaylistGrounded ||
                     parsedData.status === "outside_discovery" ||
                     parsedData.status === "needs_prompt_expansion" ||
                     parsedData.status === "no_match" ||
@@ -1098,8 +930,6 @@ ${compactCatalogPrompt}
                         parsedData.recommendations = currentRecs;
                         parsedData.ai_comment = `Curated ${promptTracks.length} tracks specifically matching "${goalText}".`;
                         
-                        const lastfmApiKey = document.getElementById("lastfmApiKeyInput").value.trim();
-                        enrichCandidateCoversProgressively(lastfmApiKey);
                     }
                 }
 
@@ -1142,8 +972,6 @@ ${compactCatalogPrompt}
                         const fillerComment = `Added ${fillerTracks.length} supplemental tracks (+${addedFillerDuration}m) to fully utilize your ${budgetMins}-minute duration goal.`;
                         parsedData.ai_comment = parsedData.ai_comment ? `${parsedData.ai_comment} ${fillerComment}` : fillerComment;
 
-                        const lastfmApiKey = document.getElementById("lastfmApiKeyInput").value.trim();
-                        enrichCandidateCoversProgressively(lastfmApiKey);
                         showToast(`Added ${fillerTracks.length} tracks to fill queue (${currentDuration + addedFillerDuration}/${budgetMins}m)`, "success");
                     }
                 }
@@ -1208,9 +1036,8 @@ ${compactCatalogPrompt}
             const queueList = document.getElementById("queueList");
             let totalDuration = 0;
             let containsExcludedItem = false;
-            const recommendations = data.recommendations || [];
+            const recommendations = normalizeRecommendations(data.recommendations);
             rememberRecommendedIds(recommendations);
-            const lastfmKey = document.getElementById("lastfmApiKeyInput").value.trim();
 
             if (!recommendations.length) {
                 queueList.innerHTML = `<div class="p-4 bg-slate-900/70 rounded-lg border border-slate-800 text-xs text-slate-400 italic text-center">No audio recommendations match this goal and exclusion set.</div>`;
@@ -1268,13 +1095,6 @@ ${compactCatalogPrompt}
                     `;
                 }).join("");
 
-                recommendations.forEach((rec, idx) => {
-                    const item = CATALOG_ITEMS.find(c => c.id === rec.content_id);
-                    if (item && (!item.cover || item.cover.includes("placehold.co"))) {
-                        const imgEl = document.getElementById(`queue-cover-${idx}`);
-                        loadCoverAsync(imgEl, item.artist, item.title, lastfmKey);
-                    }
-                });
             }
 
             // Metrics
@@ -1301,7 +1121,7 @@ ${compactCatalogPrompt}
                 excluded_topics: data.excluded_topics || [],
                 budget_minutes: requestedBudget,
                 ai_comment: data.ai_comment || "",
-                recommendations: (data.recommendations || []).map(r => {
+                recommendations: recommendations.map(r => {
                     const found = CATALOG_ITEMS.find(c => c.id === r.content_id);
                     return {
                         id: r.content_id,
@@ -1531,6 +1351,7 @@ CURRENT RECOMMENDER & SESSION CONTEXT:
 - Listener-Approved Taste Summary: "${listenerTasteSummary}"
 - Listener-Provided Preferences: "${listenerPreferences}"
 - Current Active Queue Recommendations: ${JSON.stringify(currentQueueSnapshot.map(t => ({ title: t.title, artist: t.artist, duration: t.duration, reason: t.reason })))}
+- Treat the active queue above as authoritative context. An empty database search does not mean the queue is empty; use the actual queue items to answer questions about these recommendations.
 - Existing Discovered Taste Notes: ${JSON.stringify(CHAT_TASTE_INSIGHTS)}
 
 MANDATORY RULES:
@@ -1555,12 +1376,20 @@ Return valid JSON strictly matching this schema:
 CONVERSATION HISTORY:
 ${recentHistory || "No previous messages."}
 
+ACTIVE QUEUE ITEMS (authoritative; answer queue questions from these exact items):
+${JSON.stringify(currentQueueSnapshot.map(t => ({
+                title: t.title,
+                artist: t.artist,
+                duration: t.duration,
+                reason: t.reason
+            })))}
+
 NEW LISTENER MESSAGE:
 "${userText}"
 `;
 
             try {
-                const response = await requestOllamaJson(systemInstruction, chatPrompt);
+                const response = await requestOllamaJson(systemInstruction, chatPrompt, "chat");
                 
                 CHAT_HISTORY.push({ role: "user", text: userText });
                 CHAT_HISTORY.push({ role: "assistant", text: response.reply });
