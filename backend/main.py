@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import os
 import re
@@ -107,16 +108,27 @@ SAFE_FUNCTIONS = {
 MAX_QUERY_ROWS = 100
 
 app = FastAPI(title="Music Recommender Local AI API")
+logger = logging.getLogger(__name__)
 
 
 class AssistantRequest(BaseModel):
     systemInstruction: str = Field(min_length=1, max_length=20000)
     userContent: str = Field(min_length=1, max_length=30000)
-    task: Literal["recommendation", "chat"] = "recommendation"
+    task: Literal["recommendation", "chat", "discovery"] = "recommendation"
+    skipCatalog: bool = False
 
 
 class YouTubePlaylistRequest(BaseModel):
     playlistUrl: str = Field(min_length=1, max_length=2048)
+
+
+class TrackIdentity(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    artist: str = Field(min_length=1, max_length=300)
+
+
+class TrackVerificationRequest(BaseModel):
+    tracks: list[TrackIdentity] = Field(max_length=50)
 
 
 def extract_youtube_playlist_id(playlist_url: str) -> str:
@@ -286,9 +298,11 @@ def call_cloudflare_worker(
     *,
     model: str = MODEL,
     allow_plain_text: bool = False,
+    max_tokens: int = 1024,
 ) -> dict[str, Any]:
     input_payload = {
         "model": model,
+        "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_message},
@@ -340,21 +354,22 @@ def call_cloudflare_worker(
                     }
                 raise
         choices = result.get("choices")
-        if isinstance(choices, list) and choices:
-            first_choice = choices[0]
-            message = first_choice.get("message") if isinstance(first_choice, dict) else None
-            content = message.get("content") if isinstance(message, dict) else None
-            if isinstance(content, str) and content.strip():
-                try:
-                    return clean_json(content)
-                except HTTPException:
-                    if allow_plain_text:
-                        return {
-                            "reply": content.strip(),
-                            "extracted_taste_insights": [],
-                            "suggested_recommender_action": None,
-                        }
-                    raise
+        if isinstance(choices, list):
+            if choices:
+                first_choice = choices[0]
+                message = first_choice.get("message") if isinstance(first_choice, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str) and content.strip():
+                    try:
+                        return clean_json(content)
+                    except HTTPException:
+                        if allow_plain_text:
+                            return {
+                                "reply": content.strip(),
+                                "extracted_taste_insights": [],
+                                "suggested_recommender_action": None,
+                            }
+                        raise
             raise HTTPException(
                 status_code=502,
                 detail="Cloudflare AI Worker returned a completion without message content.",
@@ -625,6 +640,7 @@ def generate_catalog_tool(user_content: str) -> dict[str, Any]:
         tool_instruction,
         f"Listener request:\n{user_content}",
         model=SQL_MODEL,
+        max_tokens=384,
     )
     tool = plan.get("tool")
     arguments = plan.get("arguments", {})
@@ -729,6 +745,7 @@ def generate_catalog_query(user_content: str) -> str | None:
         query_system_instruction,
         f"Listener request:\n{user_content}",
         model=SQL_MODEL,
+        max_tokens=768,
     )
     query = plan.get("sql")
     if query is None:
@@ -767,6 +784,7 @@ def generate_catalog_query(user_content: str) -> str | None:
                 ensure_ascii=True,
             ),
             model=SQL_MODEL,
+            max_tokens=768,
         )
         repaired_query = repair.get("sql")
         if not isinstance(repaired_query, str):
@@ -840,6 +858,129 @@ def import_youtube_playlist(request: YouTubePlaylistRequest) -> dict[str, Any]:
     return load_youtube_playlist(request.playlistUrl)
 
 
+def normalize_track_identity(value: str) -> str:
+    return "".join(
+        character
+        for character in value.lower()
+        if character.isalnum()
+    )
+
+
+@app.post("/api/catalog/verify-tracks")
+def verify_discovered_tracks(request: TrackVerificationRequest) -> dict[str, Any]:
+    candidates = [track.model_dump() for track in request.tracks]
+    rows = query_duckdb_catalog("verify_tracks", {"tracks": candidates})
+    tracks_by_candidate: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        candidate_index = row.get("candidate_index")
+        if isinstance(candidate_index, int) and 0 <= candidate_index < len(candidates):
+            tracks_by_candidate.setdefault(candidate_index, []).append(row)
+
+    verified_tracks = []
+    seen_track_ids: set[str] = set()
+    for candidate_index, candidate in enumerate(candidates):
+        matches = tracks_by_candidate.get(candidate_index, [])
+        unique_matches: dict[tuple[str, str], dict[str, Any]] = {}
+        for match in matches:
+            key = (
+                normalize_track_identity(match.get("title", "")),
+                normalize_track_identity(match.get("artist", "")),
+            )
+            previous = unique_matches.get(key)
+            if previous is None or (
+                match.get("candidate_artist_match") == 1,
+                match.get("source") == "primary",
+                match.get("popularity") or 0,
+            ) > (
+                previous.get("candidate_artist_match") == 1,
+                previous.get("source") == "primary",
+                previous.get("popularity") or 0,
+            ):
+                unique_matches[key] = match
+
+        exact_title_matches = [
+            row for row in unique_matches.values()
+            if row.get("title_similarity") == 1.0
+        ]
+        candidate_matches = exact_title_matches or list(unique_matches.values())
+        artist_matches = [
+            row for row in candidate_matches
+            if (
+                row.get("candidate_artist_match") == 1
+                or normalize_track_identity(row.get("artist", ""))
+                == normalize_track_identity(candidate["artist"])
+            )
+            and row.get("title_similarity", 1) >= 0.60
+        ]
+        selected = (
+            max(
+                artist_matches,
+                key=lambda row: (
+                    row.get("title_similarity", 0),
+                    row.get("source") == "primary",
+                    row.get("popularity") or 0,
+                ),
+            )
+            if artist_matches
+            else None
+        )
+        if selected is None:
+            fuzzy_matches = sorted(
+                (
+                    row for row in candidate_matches
+                    if row.get("title_similarity", 0) >= 0.68
+                    and (
+                        row.get("artist_similarity", 0) >= 0.35
+                        or row.get("title_similarity", 0) >= 0.82
+                    )
+                ),
+                key=lambda row: (
+                    0.7 * row.get("title_similarity", 0)
+                    + 0.3 * row.get("artist_similarity", 0),
+                    row.get("artist_similarity", 0),
+                    row.get("title_similarity", 0),
+                    row.get("source") == "primary",
+                    row.get("popularity") or 0,
+                ),
+                reverse=True,
+            )
+            if fuzzy_matches:
+                selected = fuzzy_matches[0]
+        if selected is None and exact_title_matches:
+            selected = max(
+                exact_title_matches,
+                key=lambda row: (
+                    row.get("artist_similarity", 0),
+                    row.get("source") == "primary",
+                    row.get("popularity") or 0,
+                ),
+            )
+        if selected is None:
+            continue
+        track_id = selected.get("catalog_track_id")
+        title = selected.get("title")
+        artist = selected.get("artist")
+        if track_id is None or not isinstance(title, str) or not isinstance(artist, str):
+            continue
+        stable_id = str(track_id)
+        if stable_id in seen_track_ids:
+            continue
+        seen_track_ids.add(stable_id)
+        verified_tracks.append(
+            {
+                "catalog_track_id": track_id,
+                "title": title,
+                "artist": artist,
+                "duration_ms": selected.get("duration_ms"),
+                "genre": selected.get("genre"),
+                "candidate_index": candidate_index,
+                "artist_corrected": selected.get("candidate_artist_match") != 1,
+                "source": selected.get("source", "primary"),
+            }
+        )
+    return {"tracks": verified_tracks}
+
+
 @app.post("/api/ai/json")
 def assistant_json(request: AssistantRequest) -> dict[str, Any]:
     normalized_request = request.userContent.strip().casefold().strip("!.,? \"'")
@@ -864,7 +1005,11 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
         latest_listener_message is not None
         and latest_listener_message.group(1).strip().casefold().strip("!.,? ") in small_talk
     )
-    if normalized_request in small_talk or latest_message_is_small_talk:
+    if request.task == "discovery" or request.skipCatalog:
+        rows = []
+        catalog_context_used = False
+        catalog_source = "none"
+    elif normalized_request in small_talk or latest_message_is_small_talk:
         rows = []
         catalog_context_used = False
         catalog_source = "none"
@@ -902,10 +1047,52 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
                 "db:<catalog_track_id>."
             )
 
-    final_result = call_cloudflare_worker(
-        final_system_instruction,
-        final_user_content,
-        model=CHAT_MODEL if request.task == "chat" else MODEL,
-        allow_plain_text=request.task == "chat",
-    )
+    selected_model = CHAT_MODEL if request.task == "chat" else MODEL
+    max_tokens = {
+        "chat": 512,
+        "recommendation": 1200,
+        "discovery": 1400,
+    }[request.task]
+    model_candidates = list(dict.fromkeys((selected_model, CHAT_MODEL, MODEL, "apertus")))
+    empty_completion_error: HTTPException | None = None
+    for model_index, model in enumerate(model_candidates):
+        try:
+            final_result = call_cloudflare_worker(
+                final_system_instruction,
+                final_user_content,
+                model=model,
+                allow_plain_text=request.task == "chat",
+                max_tokens=max_tokens,
+            )
+            break
+        except HTTPException as error:
+            if (
+                error.status_code != 502
+                or "completion without message content" not in error.detail
+            ):
+                raise
+            empty_completion_error = error
+            if model_index + 1 < len(model_candidates):
+                logger.warning(
+                    "Cloudflare model %s returned no message content for %s; retrying with %s",
+                    model,
+                    request.task,
+                    model_candidates[model_index + 1],
+                )
+                continue
+            attempted_models = ", ".join(model_candidates)
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Cloudflare AI Worker returned completions without message content "
+                    f"from all tried models: {attempted_models}."
+                ),
+            ) from error
+    else:
+        if empty_completion_error is not None:
+            raise empty_completion_error
+        raise HTTPException(
+            status_code=502,
+            detail="Cloudflare AI Worker did not return a completion.",
+        )
     return {"result": final_result, "catalog": rows, "catalog_source": catalog_source}

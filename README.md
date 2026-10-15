@@ -19,11 +19,12 @@ Run the Bash setup script from the repository root (Git Bash or WSL on Windows):
 bash ./setup.sh
 ```
 
-The script creates a local `.venv`, installs the Kaggle CLI and pandas, downloads
-the four Kaggle source datasets into `csv/`, transforms the source files into
-the eight relational CSVs under `transformed/`, starts PostgreSQL with Docker
-Compose, and runs the containerized database loader. It asks before loading
-because the loader drops and recreates the music tables.
+The script creates a local `.venv`, installs the Kaggle CLI and Parquet
+transformation dependencies, downloads the four Kaggle source datasets into
+`csv/`, transforms the source files into eight canonical Parquet tables under
+`transformed/`, starts PostgreSQL with Docker Compose, and runs the
+containerized database loader. It asks before loading because the loader drops
+and recreates the PostgreSQL backup tables.
 
 After setup completes, connect to the populated database with:
 
@@ -46,21 +47,37 @@ to download the embedding model.
 Docker Desktop/Engine, Docker Compose v2, and `curl` must be installed; the
 engine must be running. It does not download or populate the music dataset.
 
-The UI is served at <http://localhost:8080>. Recommendation generation uses
-the `llama` model key on the Cloudflare Worker at
+The UI is served at <http://localhost:8080>. Catalog-backed recommendations
+use the `llama` model key on the Cloudflare Worker at
 `https://music-rec-ai.htrussell.workers.dev`; chat and catalog/SQL planning use
-the `glm` model key. Set `CLOUDFLARE_WORKER_URL` in the shell or Compose `.env`
-file to override the Worker endpoint. `nomic-embed-text:v1.5` remains configured
-as the local Ollama embedding model. For catalog questions, the API asks the
-Worker's SQL model to select a bounded catalog tool.
+the `glm` model key. If either model returns a completion without message
+content, the API retries with the other configured model and then `apertus` if
+needed. Direct Prompt Mode uses `llama` to generate tracks. Playlist-grounded
+recommendations use the supplied playlist candidate pool directly and skip a
+redundant catalog-planning call;
+other catalog-backed requests continue to use DuckDB. Direct Prompt Mode
+verifies titles and artist credits against the local catalog using exact matches
+or lenient fuzzy title/artist similarity, and makes up to two additional
+discovery passes to fill a short playlist. It prefers matching artist credits
+but can select the closest title candidate when the model returns a mismatched
+artist or several plausible matches; occasional catalog mismatches are possible.
+It never exceeds the requested duration. A partial queue is retained if a refill
+request fails or the catalog has too few matching tracks.
+The API sets task-specific output-token limits to constrain generated response
+size. Set `CLOUDFLARE_WORKER_URL` in the shell or Compose `.env` file to
+override the Worker endpoint. `nomic-embed-text:v1.5` remains configured as the
+local Ollama embedding model. For catalog questions, the API asks the Worker's
+SQL model to select a bounded catalog tool.
 Track search, album search, and genre comparisons run as parameterized queries
-against DuckDB, which loads the transformed CSV tables from `transformed/` at
-startup. Prompts, approved profile details, and relevant catalog rows are sent
-to the Cloudflare Worker for model processing. If the model selects an
-unsupported catalog operation, or DuckDB is unavailable, the API can fall back
-to its existing read-only PostgreSQL query path. PostgreSQL fallback SQL is
-still validated against the music-table allowlist and row limit and runs using
-the `music_reader` role.
+against DuckDB, which queries the transformed Parquet files from
+`transformed/` at startup without copying the catalog into DuckDB tables.
+PostgreSQL is a separately loaded relational backup/query fallback, derived
+from those same Parquet files. Prompts, approved profile details, and relevant
+catalog rows are sent to the Cloudflare Worker for model processing. If the
+model selects an unsupported catalog operation, or DuckDB is unavailable, the
+API can fall back to its existing read-only PostgreSQL query path. PostgreSQL
+fallback SQL is still validated against the music-table allowlist and row limit
+and runs using the `music_reader` role.
 `MUSIC_READER_PASSWORD` can be set in the shell or a Compose `.env` file to
 override the local-development default.
 
@@ -77,10 +94,21 @@ environment variables or in `~/.kaggle/kaggle.json`. To reuse source CSV files
 already present in `csv/`, run `bash ./setup.sh --skip-download`. Add `--yes` to
 confirm database replacement non-interactively.
 
-The separate `scripts/csv_to_parquet_hdfs.py` script is not run by this setup:
-it exports the transformed tables to HDFS and expects a reachable
-`namenode:9000`. DuckDB currently loads the transformed CSV files directly;
-using Parquet for its catalog inputs can be a later storage optimization.
-Kafka is already in Compose, and Avro could be used for versioned
-listener-feedback events if/when a schema registry and consumer are added.
-Avro streaming should not replace Parquet for analytical catalog storage.
+`transform_erd.py` writes Zstandard-compressed Parquet as the canonical
+transformed catalog. The original Kaggle downloads remain CSV source files.
+The PostgreSQL loader streams Parquet data in bounded batches, while DuckDB
+reads those files directly. The optional
+`scripts/export_musicbrainz_parquet.py` exports a compact recording/title/
+artist-credit index from a separately imported MusicBrainz PostgreSQL database
+to `musicbrainz/recordings.parquet`; it does not download or import the
+MusicBrainz database. Set `MUSICBRAINZ_DSN` when running the exporter. The
+export orders rows by normalized title so DuckDB can prune Parquet row groups
+for exact-title lookups. The DuckDB verifier uses this index when present,
+favoring exact artist credits and omitting ambiguous or unknown title matches.
+
+The legacy `scripts/csv_to_parquet_hdfs.py` remains an optional HDFS export
+path, reads the canonical Parquet tables, and expects a reachable
+`namenode:9000`. Kafka is already in Compose, and Avro could be used for
+versioned listener-feedback events if/when a schema registry and consumer are
+added. Avro streaming should not replace Parquet for analytical catalog
+storage.

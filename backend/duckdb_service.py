@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any, Literal
@@ -10,6 +11,9 @@ from pydantic import BaseModel, Field
 
 
 DATA_DIR = Path(os.getenv("MUSIC_DATA_DIR", "/data/transformed"))
+MUSICBRAINZ_PARQUET = Path(
+    os.getenv("MUSICBRAINZ_PARQUET", "/data/musicbrainz/recordings.parquet")
+)
 MUSIC_TABLES = (
     "album",
     "album_scores",
@@ -25,10 +29,11 @@ MAX_QUERY_ROWS = 100
 app = FastAPI(title="Music Recommender DuckDB Catalog")
 connection: duckdb.DuckDBPyConnection | None = None
 connection_lock = threading.Lock()
+musicbrainz_index_available = False
 
 
 class CatalogToolRequest(BaseModel):
-    tool: Literal["search_tracks", "search_albums", "compare_genres"]
+    tool: Literal["search_tracks", "verify_tracks", "search_albums", "compare_genres"]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -83,15 +88,22 @@ def rows_from_cursor(cursor: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 
 @app.on_event("startup")
 def load_music_catalog() -> None:
-    global connection
+    global connection, musicbrainz_index_available
     connection = duckdb.connect(":memory:")
     for table in MUSIC_TABLES:
-        csv_path = DATA_DIR / f"{table}.csv"
-        if not csv_path.is_file():
-            raise RuntimeError(f"Required DuckDB catalog source is missing: {csv_path}")
-        escaped_path = str(csv_path).replace("'", "''")
+        parquet_path = DATA_DIR / f"{table}.parquet"
+        if not parquet_path.is_file():
+            raise RuntimeError(f"Required DuckDB catalog source is missing: {parquet_path}")
+        escaped_path = str(parquet_path).replace("'", "''")
         connection.execute(
-            f'CREATE TABLE "{table}" AS SELECT * FROM read_csv_auto(\'{escaped_path}\', header = true)'
+            f'CREATE VIEW "{table}" AS SELECT * FROM read_parquet(\'{escaped_path}\')'
+        )
+    musicbrainz_index_available = MUSICBRAINZ_PARQUET.is_file()
+    if musicbrainz_index_available:
+        escaped_path = str(MUSICBRAINZ_PARQUET).replace("'", "''")
+        connection.execute(
+            "CREATE VIEW musicbrainz_recordings AS "
+            f"SELECT * FROM read_parquet('{escaped_path}')"
         )
 
 
@@ -170,6 +182,144 @@ def run_search_tracks(arguments: dict[str, Any], limit: int) -> list[dict[str, A
     if connection is None:
         raise HTTPException(status_code=503, detail="DuckDB catalog has not finished loading.")
     return rows_from_cursor(connection.execute(statement, parameters))
+
+
+def run_verify_tracks(arguments: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = arguments.get("tracks")
+    if (
+        not isinstance(candidates, list)
+        or len(candidates) > 50
+        or any(not isinstance(candidate, dict) for candidate in candidates)
+    ):
+        raise HTTPException(status_code=422, detail="Argument 'tracks' must be a list of at most 50 track objects.")
+
+    verified: list[dict[str, Any]] = []
+    if connection is None:
+        raise HTTPException(status_code=503, detail="DuckDB catalog has not finished loading.")
+
+    local_statement = """
+        SELECT
+            tracks.track_id AS catalog_track_id,
+            tracks.track_name AS title,
+            string_agg(DISTINCT artists.artist_name, ', ' ORDER BY artists.artist_name) AS artist,
+            tracks.duration_ms,
+            genre.genre_name AS genre,
+            tracks.popularity,
+            jaro_winkler_similarity(
+                regexp_replace(lower(COALESCE(tracks.track_name, '')), '[^\\p{L}\\p{N}]+', '', 'g'),
+                ?
+            ) AS title_similarity,
+            MAX(
+                jaro_winkler_similarity(
+                    regexp_replace(
+                        lower(COALESCE(artists.artist_name, '')),
+                        '[^\\p{L}\\p{N}]+',
+                        '',
+                        'g'
+                    ),
+                    ?
+                )
+            ) AS artist_similarity,
+            MAX(
+                CASE
+                    WHEN regexp_replace(lower(COALESCE(artists.artist_name, '')), '[^\\p{L}\\p{N}]+', '', 'g') = ?
+                    THEN 1 ELSE 0
+                END
+            ) AS candidate_artist_match
+        FROM tracks
+        LEFT JOIN track_artists ON tracks.track_id = track_artists.track_id
+        LEFT JOIN artists ON track_artists.artist_id = artists.artist_id
+        LEFT JOIN genre ON tracks.genre_id = genre.genre_id
+        WHERE regexp_replace(lower(COALESCE(tracks.track_name, '')), '[^\\p{L}\\p{N}]+', '', 'g') = ?
+           OR jaro_winkler_similarity(
+                regexp_replace(lower(COALESCE(tracks.track_name, '')), '[^\\p{L}\\p{N}]+', '', 'g'),
+                ?
+           ) >= 0.60
+        GROUP BY tracks.track_id, tracks.track_name, tracks.duration_ms, genre.genre_name, tracks.popularity
+        HAVING regexp_replace(lower(COALESCE(tracks.track_name, '')), '[^\\p{L}\\p{N}]+', '', 'g') = ?
+            OR jaro_winkler_similarity(
+                regexp_replace(lower(COALESCE(tracks.track_name, '')), '[^\\p{L}\\p{N}]+', '', 'g'),
+                ?
+            ) >= 0.60
+        ORDER BY candidate_artist_match DESC, title_similarity DESC,
+                 artist_similarity DESC, tracks.popularity DESC NULLS LAST
+        LIMIT 25
+    """
+    musicbrainz_statement = """
+        SELECT
+            'mb:' || recording_mbid AS catalog_track_id,
+            title,
+            artist,
+            duration_ms,
+            NULL AS genre,
+            NULL AS popularity,
+            1.0 AS title_similarity,
+            jaro_winkler_similarity(
+                regexp_replace(lower(COALESCE(artist, '')), '[^\\p{L}\\p{N}]+', '', 'g'),
+                ?
+            ) AS artist_similarity,
+            CASE
+                WHEN regexp_replace(lower(COALESCE(artist, '')), '[^\\p{L}\\p{N}]+', '', 'g') = ?
+                THEN 1 ELSE 0
+            END AS candidate_artist_match
+        FROM musicbrainz_recordings
+        WHERE title_key = ?
+        LIMIT 10
+    """
+
+    for candidate_index in range(len(candidates)):
+        candidate = candidates[candidate_index]
+        if set(candidate) != {"title", "artist"}:
+            raise HTTPException(
+                status_code=422,
+                detail="Each track to verify must contain only 'title' and 'artist'.",
+            )
+        title = candidate.get("title")
+        artist = candidate.get("artist")
+        if (
+            not isinstance(title, str)
+            or not isinstance(artist, str)
+            or not title.strip()
+            or not artist.strip()
+            or len(title) > 300
+            or len(artist) > 300
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Track titles and artist names must be non-empty strings of at most 300 characters.",
+            )
+        normalized_title = re.sub(r"[\W_]+", "", title.lower(), flags=re.UNICODE)
+        normalized_artist = re.sub(r"[\W_]+", "", artist.lower(), flags=re.UNICODE)
+        rows = rows_from_cursor(
+            connection.execute(
+                local_statement,
+                [
+                    normalized_title,
+                    normalized_artist,
+                    normalized_artist,
+                    normalized_title,
+                    normalized_title,
+                    normalized_title,
+                    normalized_title,
+                ],
+            )
+        )
+        verified.extend(
+            {"candidate_index": candidate_index, "source": "primary", **row}
+            for row in rows
+        )
+        if musicbrainz_index_available:
+            musicbrainz_rows = rows_from_cursor(
+                connection.execute(
+                    musicbrainz_statement,
+                    [normalized_artist, normalized_artist, normalized_title],
+                )
+            )
+            verified.extend(
+                {"candidate_index": candidate_index, "source": "musicbrainz", **row}
+                for row in musicbrainz_rows
+            )
+    return verified
 
 
 def run_search_albums(arguments: dict[str, Any], limit: int) -> list[dict[str, Any]]:
@@ -280,6 +430,7 @@ def query_catalog(request: CatalogToolRequest) -> dict[str, Any]:
             "exclude_explicit",
             "limit",
         },
+        "verify_tracks": {"tracks"},
         "search_albums": {
             "query",
             "genre",
@@ -299,6 +450,8 @@ def query_catalog(request: CatalogToolRequest) -> dict[str, Any]:
     with connection_lock:
         if request.tool == "search_tracks":
             rows = run_search_tracks(arguments, limit)
+        elif request.tool == "verify_tracks":
+            rows = run_verify_tracks(arguments)
         elif request.tool == "search_albums":
             rows = run_search_albums(arguments, limit)
         else:
