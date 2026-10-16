@@ -799,30 +799,30 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(worker.call_args_list[1].kwargs["max_tokens"], 1200)
         self.assertFalse(worker.call_args_list[1].kwargs["allow_plain_text"])
 
-    def test_recommendation_tries_apertus_when_both_primary_models_are_empty(self) -> None:
+    def test_recommendation_retries_with_strict_json_instruction_on_invalid_json(self) -> None:
         request = AssistantRequest(
-            systemInstruction="Return playlist recommendations as JSON.",
+            systemInstruction='Return playlist recommendations as JSON with a "recommendations" array.',
             userContent="Recommend songs for a calm evening.",
             task="recommendation",
         )
-        empty_completion = HTTPException(
+        invalid_json = HTTPException(
             status_code=502,
-            detail="Cloudflare AI Worker returned a completion without message content.",
+            detail="AI provider did not return a JSON object. Response began: 'Here are some songs'",
         )
         with (
             patch("main.fetch_catalog_for_request", return_value=([], "none")),
             patch(
                 "main.call_cloudflare_worker",
-                side_effect=[empty_completion, empty_completion, {"recommendations": []}],
+                side_effect=[invalid_json, {"recommendations": []}],
             ) as worker,
         ):
             response = assistant_json(request)
 
         self.assertEqual(response["result"], {"recommendations": []})
-        self.assertEqual(
-            [call.kwargs["model"] for call in worker.call_args_list],
-            [MODEL, CHAT_MODEL, "apertus"],
-        )
+        self.assertEqual(worker.call_count, 2)
+        self.assertEqual(worker.call_args_list[0].kwargs["model"], MODEL)
+        self.assertEqual(worker.call_args_list[1].kwargs["model"], CHAT_MODEL)
+        self.assertIn("previous model did not return a valid JSON object", worker.call_args_list[1].args[0])
 
     def test_empty_completions_from_every_worker_model_return_clear_error(self) -> None:
         request = AssistantRequest(
@@ -838,16 +838,16 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             patch("main.fetch_catalog_for_request", return_value=([], "none")),
             patch(
                 "main.call_cloudflare_worker",
-                side_effect=[empty_completion, empty_completion, empty_completion],
+                side_effect=[empty_completion, empty_completion],
             ) as worker,
         ):
             with self.assertRaises(HTTPException) as error:
                 assistant_json(request)
 
-        self.assertIn("all tried models: llama, glm, apertus", error.exception.detail)
+        self.assertIn("all tried models: llama, glm", error.exception.detail)
         self.assertEqual(
             [call.kwargs["model"] for call in worker.call_args_list],
-            [MODEL, CHAT_MODEL, "apertus"],
+            [MODEL, CHAT_MODEL],
         )
 
     def test_cloudflare_worker_accepts_object_result(self) -> None:

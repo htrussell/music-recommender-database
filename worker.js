@@ -7,7 +7,6 @@ const corsHeaders = {
 const modelMap = {
   glm: "@cf/zai-org/glm-4.7-flash",
   llama: "@cf/meta/llama-3.2-1b-instruct",
-  apertus: "@cf/swiss-ai/apertus-v1.5-8b",
 };
 
 function jsonResponse(body, status = 200) {

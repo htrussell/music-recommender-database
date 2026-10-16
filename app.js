@@ -612,6 +612,43 @@
             return normalized;
         }
 
+        function trackIdentityKey(track) {
+            if (!track || typeof track.title !== "string" || typeof track.artist !== "string") return "";
+            return normalizeSongKey(`${track.artist} ${track.title}`);
+        }
+
+        function getRecommendationExclusions(ids = []) {
+            const excludedIds = new Set(ids.map(id => String(id)));
+            PLAYLIST_ITEMS.forEach(track => excludedIds.add(`playlist:${track.id}`));
+            const knownTracks = [
+                ...PLAYLIST_ITEMS,
+                ...CATALOG_ITEMS.filter(track => excludedIds.has(String(track.id)))
+            ];
+            const excludedIdentities = new Set(knownTracks.map(trackIdentityKey).filter(Boolean));
+            return { ids: excludedIds, identities: excludedIdentities };
+        }
+
+        function filterExcludedRecommendations(recommendations, exclusions) {
+            const seenIds = new Set();
+            const seenIdentities = new Set();
+            return recommendations.filter(recommendation => {
+                const id = String(recommendation.content_id);
+                const item = CATALOG_ITEMS.find(candidate => String(candidate.id) === id);
+                const identity = item ? trackIdentityKey(item) : "";
+                if (
+                    exclusions.ids.has(id) ||
+                    (identity && exclusions.identities.has(identity)) ||
+                    seenIds.has(id) ||
+                    (identity && seenIdentities.has(identity))
+                ) {
+                    return false;
+                }
+                seenIds.add(id);
+                if (identity) seenIdentities.add(identity);
+                return true;
+            });
+        }
+
         async function fetchExternalDiscoveryTracks({
             goalText,
             budgetMins,
@@ -663,6 +700,13 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
 `;
 
             try {
+                const exclusions = getRecommendationExclusions(existingIds || []);
+                (currentTracks || []).forEach(trackName => {
+                    const identity = typeof trackName === "string"
+                        ? normalizeSongKey(trackName)
+                        : trackIdentityKey(trackName);
+                    if (identity) exclusions.identities.add(identity);
+                });
                 const result = await requestAiJson(systemPrompt, userPrompt, task);
                 if (!Array.isArray(result.tracks)) {
                     throw new Error("AI discovery response did not include a tracks array.");
@@ -695,19 +739,34 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                 }
 
                 mergeDatabaseCatalogRows(verificationData.tracks);
-                return verificationData.tracks.map(verifiedTrack => {
-                    const item = CATALOG_ITEMS.find(candidate => candidate.id === `db:${verifiedTrack.catalog_track_id}`);
+                const seenIds = new Set();
+                const seenIdentities = new Set();
+                return verificationData.tracks.flatMap(verifiedTrack => {
+                    const id = `db:${verifiedTrack.catalog_track_id}`;
+                    const item = CATALOG_ITEMS.find(candidate => candidate.id === id);
                     if (!item) {
                         throw new Error("A catalog-verified track could not be loaded into the candidate catalog.");
                     }
+                    const identity = trackIdentityKey(item);
+                    if (
+                        exclusions.ids.has(id) ||
+                        exclusions.ids.has(String(verifiedTrack.catalog_track_id)) ||
+                        (identity && exclusions.identities.has(identity)) ||
+                        seenIds.has(id) ||
+                        (identity && seenIdentities.has(identity))
+                    ) {
+                        return [];
+                    }
+                    seenIds.add(id);
+                    if (identity) seenIdentities.add(identity);
                     item.tags = [...new Set([...item.tags, "outside-discovery", "prompt-curated"])];
                     item.isDiscoveredMatch = true;
-                    return {
+                    return [{
                         ...item,
                         reason: verifiedTrack.artist_corrected
                             ? `Catalog verified this title and corrected its artist to ${verifiedTrack.artist}.`
                             : `Catalog verified this title and artist as a match for "${goalText}".`
-                    };
+                    }];
                 });
             } catch (err) {
                 console.error("Failed to query external discovery tracks:", err);
@@ -764,13 +823,23 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                 
                 let accumulatedMinutes = 0;
                 const fillerTracks = [];
+                const exclusions = getRecommendationExclusions(existingIds || []);
+                (currentTracks || []).forEach(trackName => {
+                    const identity = typeof trackName === "string"
+                        ? normalizeSongKey(trackName)
+                        : trackIdentityKey(trackName);
+                    if (identity) exclusions.identities.add(identity);
+                });
 
                 for (const track of result.tracks) {
                     const dur = Math.min(20, Math.max(1, parseInt(track.duration_minutes) || 4));
-                    if (accumulatedMinutes + dur > remainingBudget && fillerTracks.length > 0) continue;
-                    accumulatedMinutes += dur;
-
+                    const identity = trackIdentityKey(track);
+                    if (!identity || exclusions.identities.has(identity) || accumulatedMinutes + dur > remainingBudget) continue;
                     const id = `filler:${normalizeSongKey(track.artist + " " + track.title)}`;
+                    if (exclusions.ids.has(id)) continue;
+                    exclusions.identities.add(identity);
+                    exclusions.ids.add(id);
+                    accumulatedMinutes += dur;
                     fillerTracks.push({
                         id: id,
                         title: track.title,
@@ -860,7 +929,15 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
             }
 
             const exclusionTokens = explicitExclusions.toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
+            const recommendationExclusions = getRecommendationExclusions(previouslyRecommendedIds);
             let eligibleCandidates = CATALOG_ITEMS.filter(item => {
+                const identity = trackIdentityKey(item);
+                if (
+                    recommendationExclusions.ids.has(String(item.id)) ||
+                    (identity && recommendationExclusions.identities.has(identity))
+                ) {
+                    return false;
+                }
                 if (!exclusionTokens.length) return true;
                 const searchText = `${item.title} ${item.artist} ${item.tags.join(" ")}`.toLowerCase();
                 return !exclusionTokens.some(ex => searchText.includes(ex));
@@ -870,7 +947,7 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
 
             const compactCatalogPrompt = eligibleCandidates.length 
                 ? eligibleCandidates.map(c => `ID: "${c.id}" | ${c.title} - ${c.artist} | ${c.duration}m | Tags: ${c.tags.slice(0, 3).join(", ")}`).join("\n")
-                : "None available (Direct Prompt Mode active)";
+                : "No eligible new candidates are available; discover new tracks instead of reusing excluded songs.";
 
             const chatInsightsText = CHAT_TASTE_INSIGHTS.length 
                 ? `\nLEARNED PREFERENCES FROM CONVERSATIONAL AI CHAT:\n${CHAT_TASTE_INSIGHTS.map(t => `- ${t}`).join("\n")}`
@@ -885,7 +962,7 @@ CRITICAL 100% RELEVANCE & ZERO IRRELEVANT FILLER RULES:
 2a. LISTENER PROFILE: Incorporate the listener-approved taste summary and explicit preferences when choosing tracks.
 3. ZERO UNRELATED BACKFILLING: If the candidate catalog only has 1 or 2 songs that genuinely match, select ONLY those matching songs. NEVER force-fit unrelated catalog songs just to fill the budget!
 4. PROMPT-DRIVEN EXPANSION: If no candidates exist, or if the user's prompt requests a specific franchise, soundtrack, artist, or style that is NOT fully populated in the candidate catalog, or if qualified candidates cannot fill at least 80% of the ${budgetMins}-minute budget, set "needs_external_discovery": true and "status": "needs_prompt_expansion".
-5. STRICT EXCLUSIONS: Under no circumstances select any item matching EXPLICIT EXCLUSIONS.
+5. STRICT EXCLUSIONS: Under no circumstances select any item matching EXPLICIT EXCLUSIONS or the imported playlist / previously recommended tracks listed below.
 6. GOAL PRIORITY: Override historical preferences when they conflict with the user's goal.
 
 Return valid JSON strictly matching schema:
@@ -909,6 +986,7 @@ Explicit Exclusions: "${explicitExclusions}"
 Listener-Approved Taste Summary: "${listenerTasteSummary || "None"}"
 Listener-Provided Preferences: "${listenerPreferences || "None"}"
 Previously Recommended IDs (AVOID): ${JSON.stringify(previouslyRecommendedIds.slice(0, 30))}
+Imported Playlist Tracks to Exclude: ${JSON.stringify(PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`).slice(0, 40))}
 Playlist Style Summary: ${playlistPreferenceSummary || "None (Direct prompt curation)"}
 ${chatInsightsText}
 
@@ -926,7 +1004,10 @@ ${compactCatalogPrompt}
                         `Learned chat insights: ${CHAT_TASTE_INSIGHTS.join("; ") || "None"}`
                     ].join("\n");
                     const excludedTokens = excludedTopics.map(topic => topic.toLowerCase()).filter(Boolean);
-                    const knownIds = new Set(previouslyRecommendedIds);
+                    const knownIds = new Set([
+                        ...previouslyRecommendedIds,
+                        ...PLAYLIST_ITEMS.map(track => `playlist:${track.id}`)
+                    ].map(String));
                     const recommendations = [];
                     let totalMinutes = 0;
                     const selectedTrackNames = [];
@@ -1006,7 +1087,10 @@ ${compactCatalogPrompt}
 
                 parsedData = await requestAiJson(systemPrompt, userPrompt, "recommendation", true);
 
-                let currentRecs = normalizeRecommendations(parsedData.recommendations);
+                let currentRecs = filterExcludedRecommendations(
+                    normalizeRecommendations(parsedData.recommendations),
+                    recommendationExclusions
+                );
                 parsedData.recommendations = currentRecs;
                 let currentDuration = currentRecs.reduce((sum, rec) => {
                     const item = CATALOG_ITEMS.find(c => c.id === rec.content_id);
@@ -1032,7 +1116,14 @@ ${compactCatalogPrompt}
                         budgetMins: remainingNeeded,
                         preferredTopics: parsedData.preferred_topics || [goalText],
                         excludedTopics: parsedData.excluded_topics || [],
-                        existingIds: [...previouslyRecommendedIds, ...currentRecs.map(r => r.content_id)]
+                        existingIds: [...recommendationExclusions.ids, ...currentRecs.map(r => r.content_id)],
+                        currentTracks: [
+                            ...PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`),
+                            ...currentRecs.map(recommendation => {
+                                const item = CATALOG_ITEMS.find(candidate => candidate.id === recommendation.content_id);
+                                return item ? `${item.artist} - ${item.title}` : String(recommendation.content_id);
+                            })
+                        ]
                     });
 
                     if (promptTracks.length) {
@@ -1075,8 +1166,11 @@ ${compactCatalogPrompt}
                         totalBudget: budgetMins,
                         preferredTopics: parsedData.preferred_topics || [goalText],
                         excludedTopics: parsedData.excluded_topics || [],
-                        existingIds: [...previouslyRecommendedIds, ...currentRecs.map(r => r.content_id)],
-                        currentTracks: currentTrackNames
+                        existingIds: [...recommendationExclusions.ids, ...currentRecs.map(r => r.content_id)],
+                        currentTracks: [
+                            ...PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`),
+                            ...currentTrackNames
+                        ]
                     });
 
                     if (fillerTracks && fillerTracks.length > 0) {

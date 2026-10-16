@@ -1053,12 +1053,19 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
         "recommendation": 1200,
         "discovery": 1400,
     }[request.task]
-    model_candidates = list(dict.fromkeys((selected_model, CHAT_MODEL, MODEL, "apertus")))
-    empty_completion_error: HTTPException | None = None
+    model_candidates = list(dict.fromkeys((selected_model, CHAT_MODEL, MODEL)))
+    retryable_response_error: HTTPException | None = None
+    retry_with_json_instruction = False
     for model_index, model in enumerate(model_candidates):
         try:
             final_result = call_cloudflare_worker(
-                final_system_instruction,
+                final_system_instruction
+                + (
+                    "\nThe previous model did not return a valid JSON object. Return exactly one complete "
+                    "JSON object matching the requested schema, with no prose or Markdown."
+                    if retry_with_json_instruction
+                    else ""
+                ),
                 final_user_content,
                 model=model,
                 allow_plain_text=request.task == "chat",
@@ -1066,15 +1073,27 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
             )
             break
         except HTTPException as error:
+            invalid_json = (
+                error.status_code == 502
+                and (
+                    "JSON object" in error.detail
+                    or "empty or invalid result" in error.detail
+                )
+            )
+            empty_completion = (
+                error.status_code == 502
+                and "completion without message content" in error.detail
+            )
             if (
-                error.status_code != 502
-                or "completion without message content" not in error.detail
+                not invalid_json
+                and not empty_completion
             ):
                 raise
-            empty_completion_error = error
+            retryable_response_error = error
+            retry_with_json_instruction = retry_with_json_instruction or invalid_json
             if model_index + 1 < len(model_candidates):
                 logger.warning(
-                    "Cloudflare model %s returned no message content for %s; retrying with %s",
+                    "Cloudflare model %s returned an unusable response for %s; retrying with %s",
                     model,
                     request.task,
                     model_candidates[model_index + 1],
@@ -1084,13 +1103,13 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Cloudflare AI Worker returned completions without message content "
+                    "Cloudflare AI Worker did not return a usable response "
                     f"from all tried models: {attempted_models}."
                 ),
             ) from error
     else:
-        if empty_completion_error is not None:
-            raise empty_completion_error
+        if retryable_response_error is not None:
+            raise retryable_response_error
         raise HTTPException(
             status_code=502,
             detail="Cloudflare AI Worker did not return a completion.",

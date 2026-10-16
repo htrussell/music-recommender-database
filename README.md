@@ -50,17 +50,19 @@ engine must be running. It does not download or populate the music dataset.
 The UI is served at <http://localhost:8080>. Catalog-backed recommendations
 use the `llama` model key on the Cloudflare Worker at
 `https://music-rec-ai.htrussell.workers.dev`; chat and catalog/SQL planning use
-the `glm` model key. If either model returns a completion without message
-content, the API retries with the other configured model and then `apertus` if
-needed. Direct Prompt Mode uses `llama` to generate tracks. Playlist-grounded
-recommendations use the supplied playlist candidate pool directly and skip a
-redundant catalog-planning call;
+the `glm` model key. If a model returns no message content or invalid JSON, the
+API retries with the other configured model.
+Direct Prompt Mode uses `llama` to generate tracks. Playlist-grounded
+recommendations use the imported playlist as taste context, exclude its tracks
+from new queues, and skip a redundant catalog-planning call;
 other catalog-backed requests continue to use DuckDB. Direct Prompt Mode
 verifies titles and artist credits against the local catalog using exact matches
 or lenient fuzzy title/artist similarity, and makes up to two additional
 discovery passes to fill a short playlist. It prefers matching artist credits
 but can select the closest title candidate when the model returns a mismatched
 artist or several plausible matches; occasional catalog mismatches are possible.
+Tracks already in an imported playlist and tracks recommended previously in the
+browser session are excluded from new queues.
 It never exceeds the requested duration. A partial queue is retained if a refill
 request fails or the catalog has too few matching tracks.
 The API sets task-specific output-token limits to constrain generated response
