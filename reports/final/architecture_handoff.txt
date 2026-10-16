@@ -1,0 +1,306 @@
+MUSIC RECOMMENDER ARCHITECTURE
+TEAM HANDOFF NOTES
+
+Purpose
+-------
+This note gives teammates and AI assistants quick context for completing the
+final architecture report. The detailed, authoritative project write-up is:
+
+  reports/final/architecture.md
+  reports/final/architecture.html
+
+The Markdown report contains the most complete technical detail. The HTML is a
+visual, presentation-friendly companion. This handoff is supplementary: if any
+detail here conflicts with the reports or with current code/configuration, verify
+the claim against the repository and update the reports rather than assuming.
+The original deliverable requirements are in
+reports/final/final_project_instructions.txt.
+The new reports/guide Word files add proposed product scope and report assembly
+guidance; they are not evidence of implemented behavior. In particular, the
+guide's short reference to a PostgreSQL catalog prototype is incomplete beside
+the current Parquet-canonical / DuckDB-primary / PostgreSQL-fallback path.
+
+Repository orientation
+----------------------
+Useful implementation evidence to consult:
+  README.md                         setup, behavior, source/licensing notes
+  backend/main.py                   API orchestration and model calls
+  backend/duckdb_service.py         primary Parquet/DuckDB catalog tools
+  transform_erd.py                  source CSV to Parquet transformation
+  load_postgres.py                  catalog backup schema and destructive loader
+  docker-compose.yml                local development service topology
+  sql/                              PostgreSQL indexing/benchmark examples
+Read the current code before making any claim that an optional or proposed
+component is deployed.
+
+Most important distinction
+--------------------------
+The repository contains a working music-catalog recommendation demo and several
+documented future designs. Do not describe proposed profile, chat-memory,
+Kafka/Avro, telemetry, or vector-search components as implemented.
+
+BUSINESS CONTEXT FROM THE GUIDE
+------------------------------
+The proposed Music Taste Assistant turns a listener-reviewed playlist and stated
+goal into an explainable music queue. Listeners can correct the taste summary,
+set hard exclusions, refine results in conversation, and manage saved data.
+Production streaming integration, audio playback, payment, advertising, and
+automatic preference capture are outside the proposed demo scope.
+
+The draft's proposed acceptance targets are unverified: recorded consent before
+import/persistence; deletion of saved listener data within 24 hours; visible
+accepted-or-flagged outcome for every imported row; a reviewed 100-track queue
+under 5 seconds in at least 95% of tests while respecting exclusions and showing
+supporting signals; and no persisted chat-inferred preference before listener
+confirmation. Treat these as target requirements, never as current behavior.
+The guide calls for saved queues. The agreed target is to keep a working queue
+transient and persist it in PostgreSQL only when the listener explicitly saves
+it; Kafka carries a small asynchronous lifecycle event, not queue contents.
+Queue inputs are imported playlist context plus stated/confirmed profile data;
+do not assume a live playback-event integration. The current static
+music_streaming_habits CSV is sample profile data, not a stream of listening
+events.
+
+CURRENT IMPLEMENTED SYSTEM
+--------------------------
+
+1. Catalog data
+   - Source CSV files are transformed into eight Zstandard-compressed Parquet
+     catalog files.
+   - These Parquet files are the canonical local catalog snapshot.
+   - DuckDB reads the Parquet data directly and is the primary catalog-query
+     path for the AI system.
+   - PostgreSQL is a separately loaded relational copy used as a backup and
+     bounded fallback, not the primary catalog source.
+   - The PostgreSQL catalog loader performs a destructive full reload when run.
+     Do not put durable user or conversation records in tables that it rebuilds.
+   - The demo has bounded DuckDB tools and a restricted, read-only PostgreSQL
+     fallback. Models do not receive database credentials or connect directly.
+
+2. Application and models
+   - The browser and FastAPI service coordinate recommendation/chat requests.
+   - The configured demo generation/planning path calls a Cloudflare Worker.
+   - Ollama with nomic-embed-text:v1.5 is configured for local embeddings, but
+     it is not currently the generation model and no embedding/vector retrieval
+     pipeline is implemented.
+   - A local-only or hybrid model deployment is an architectural option, not
+     current behavior. It would require separate generation-model configuration,
+     capability testing, hardware/capacity, and operational support.
+   - Cloud model use means selected prompt/context is sent to a provider. Consider
+     provider availability, network dependence, latency, quotas/cost, data
+     retention/training terms, residency, model changes, and vendor dependence.
+
+3. Listener context
+   - Playlist and taste context currently live in the browser/session/request;
+     there are no durable user profiles, saved application playlists, chat logs,
+     or long-term AI memories implemented.
+   - The API supports public YouTube playlist import with yt-dlp and normalized
+     playlist JSON. The future product's preferred import method remains a team
+     decision. No consent gate or per-row review/outcome contract is documented
+     in the current import path.
+   - The 4,000-row music_streaming_habits_2026.csv is a possible static demo
+     profile seed, not authenticated user data, actual playlists, or a history
+     of individual listening events. Its listener_id is not authentication.
+   - Genre labels in that file require a curated, versioned mapping to catalog
+     genres; do not assume direct relational IDs.
+
+PROPOSED USER AND CONVERSATION DESIGN
+-------------------------------------
+
+The following are draft architectural decisions, not implementation:
+
+1. Persistent profile and saved playlists
+   - PostgreSQL is the authoritative serving store for current user profile,
+     listener-reviewed/versioned taste summary, preferences, and saved playlists.
+     Keep AI-generated summary drafts request-scoped until the listener reviews
+     and approves them.
+   - Add purpose-specific consent history; check the latest decision before
+     playlist import or personal-data persistence. Chat history is off by
+     default and requires separate opt-in.
+   - Imported playlist rows retain their order, review status, and exception
+     reason. No row is silently discarded; ambiguous/unreviewed rows are not
+     recommendation evidence.
+   - Store inferred preferences only after explicit listener confirmation;
+     preserve confirmation provenance and time.
+   - Resolve a trusted authenticated subject to an internal user_id on the API
+     side. Never treat a client-supplied ID as authorization.
+   - Keep user-serving data in a separate schema or database from catalog tables,
+     with separate permissions and migrations. The catalog reload must not touch
+     it.
+   - The API loads current profile state directly from PostgreSQL at login or
+     request time. Kafka is not the profile database and is not on the login
+     read path.
+   - A proposed demo acceptance target is complete deletion within 24 hours,
+     including derived memories, vectors, caches, projections, and backup-expiry
+     behavior. This is not implemented or verified.
+
+2. Conversation history and topic memories
+   - Keep full message logs and longer-lived topic memories as distinct logical
+     record types in a separate PostgreSQL conversation_data schema (or separate
+     serving database), linked to the same internal user_id as profiles.
+   - Store messages as ordinary rows with ownership, conversation, order, text,
+     timestamps, and explicit expiry. Fetch only a bounded recent-message window.
+   - Store topic memories as compact summaries with their own embedding,
+     embedding-model/version, source provenance, importance/confidence, and
+     expiry. Do not vectorize every message by default.
+   - PostgreSQL is proposed because it makes owner-scoped message retrieval and
+     joins to user identity/profile straightforward. JSONB is optional for
+     bounded auxiliary metadata; it is not required for message or memory text.
+     Avro is for Kafka event contracts, not opaque persistent chat documents.
+   - pgvector is a proposed PostgreSQL extension for semantic search over topic
+     memories only. It is not installed/configured in this project. Verify it is
+     available in the chosen PostgreSQL deployment. Start with exact search and
+     ordinary owner/expiry indexes; add HNSW or IVFFlat only if benchmarks show
+     a need. Validate model/vector dimensions and versions.
+   - For a request, the authenticated API filters to the user's own unexpired
+     memories, ranks a small set by semantic similarity plus recency,
+     confidence, and importance, and combines them with recent messages. Send
+     only the minimum selected context to a model. Recalled conversation text
+     remains untrusted user content, not system instructions.
+
+3. Transcript aging and deletion
+   - Full chat logs should have a short, fixed maximum lifetime.
+   - As logs become old or less useful, a worker can extract only useful,
+     non-sensitive topics, consolidate them into a small memory, generate/update
+     a versioned embedding, and retain minimal source-conversation identifiers.
+   - Save the memory successfully before purging its source transcript. If
+     summarization fails, retry only within the transcript's hard expiry and
+     then delete the transcript without saving a failed/unsafe summary.
+   - Retrieval falloff changes how likely a memory is to be recalled. It does
+     NOT delete it. Give every transcript and memory an absolute expiry; retrieval
+     must not extend the maximum lifetime.
+   - Deleting a conversation should also delete memories derived from it by
+     default (unless the user explicitly chooses to keep a memory). Delete the
+     summary, vector, provenance, and related cache/archive copies as applicable.
+     Account deletion must cover profile, messages, memories, vectors, and
+     downstream copies, with backup expiry/restoration procedures.
+   - Exact retention windows, decay periods, thresholds, result limits, consent
+     language, and export policy remain TBD. Do not invent approved policy.
+
+4. Separation from catalog and event infrastructure
+   - Keep user_data and conversation_data outside the catalog loader and outside
+     the model-generated SQL fallback allowlist. Use separate least-privilege
+     roles and migrations; consider row-level security as defense in depth.
+   - Kafka is an asynchronous event-distribution mechanism, not the serving store
+     for current profiles, and not a searchable chat-document database.
+   - Avro defines compact, typed, evolving Kafka event payloads. Kafka user
+     events can support downstream projections/analytics. The target outbox
+     table may stage an event payload in PostgreSQL (the draft uses JSONB for
+     that internal representation) before the publisher encodes it as Avro for
+     Kafka. That JSONB outbox payload is not the transcript storage format.
+     Raw transcripts, topic summaries, and embeddings are NOT to be published
+     to Kafka/HDFS by default.
+   - If a separate approved need for conversation events is added, design its
+     data minimization, ACL, retention, deletion, and replay rules explicitly.
+   - Do not send raw chat text into model telemetry. Telemetry should contain
+     only approved operational metadata; avoid prompts, completions, credentials,
+     full catalog results, and account identifiers.
+
+TARGET KAFKA/AVRO USER-EVENT FLOW
+---------------------------------
+When an authenticated user changes a preference or saves a playlist:
+
+  API transaction:
+    1. Update current profile/playlist rows in PostgreSQL.
+    2. Insert an event_outbox row in the same transaction.
+
+  Asynchronous delivery:
+    3. Publisher reads pending outbox rows and serializes them with a registered
+       Avro schema.
+    4. Publish to a Kafka user-events topic, keyed by user_id for per-user
+       ordering.
+    5. Consumers validate schema and deduplicate by event_id. Kafka delivery is
+       at-least-once, so duplicates are expected. Commit an offset only after
+       successful sink processing.
+    6. Optional archive: Avro files in HDFS, later validated/compacted to
+       partitioned Parquet for DuckDB analytics.
+
+Kafka/HDFS/consumers/schema registry are not implemented as a complete user
+event path. The Compose Kafka service is development topology, not production
+deployment. Any retention values in the report are provisional assumptions,
+not approved policy.
+
+MODEL TELEMETRY (PROPOSED, SEPARATE FROM CHAT)
+----------------------------------------------
+Capture bounded invocation metadata such as trace/invocation ID, task,
+configured provider/model, duration, outcome, retries, optional provider-reported
+token counts, and approved catalog-tool name/result count. OpenTelemetry metrics
+and sampled traces serve operations; a separate sanitized Avro model-telemetry
+topic can support later analytics. Never put prompts, completions, credentials,
+raw catalog rows, or account identifiers in this stream by default. Telemetry
+export failure must not make a successful recommendation fail.
+
+WRITING / AI-AGENT GUIDANCE
+---------------------------
+- Read the project brief and architecture.md before changing the final report.
+- Treat architecture.md as the detailed source and architecture.html as its
+  corresponding visual summary; keep them aligned when editing.
+- Label every item as implemented, optional/development-only, proposed, or
+  future. Do not promote target designs to current-state claims without code and
+  deployment evidence.
+- Preserve evidence qualifiers: counts are from a local snapshot; no measured
+  production latency, freshness SLA, Kafka consumer lag, memory retrieval, or
+  retention behavior is established.
+- Do not claim a vector database is deployed. pgvector is only a proposed option
+  for topic-memory embeddings; the current Ollama embedding setup has no index
+  or retrieval path.
+- Do not put user/conversation rows in the catalog backup/reload lifecycle.
+- Keep model access behind the API, enforce authenticated owner scope before
+  retrieval, and keep profile/conversation schemas out of generic model SQL.
+- Treat summaries and embeddings as personal derived data; design deletion,
+  expiry, provider transfer, and backups together with the original messages.
+- Before implementation, obtain decisions on login/auth identity, consent,
+  retention/maximum ages, memory decay and usefulness thresholds, user deletion
+  semantics, export/access, model provider use, recovery/backups, and whether
+  approved queue persistence is listener-initiated; define deletion/tombstone
+  handling for the queue records and their downstream events.
+- If asked for implementation, work incrementally: first settle policy/schema
+  boundaries, then implement targeted components and tests. Do not implement
+  infrastructure merely because it appears in this architecture draft.
+
+TERMS IN PLAIN LANGUAGE
+-----------------------
+Parquet: compact column-oriented files suited to reading/aggregating catalog
+columns; the current canonical music catalog format.
+
+DuckDB: an analytical SQL engine that can query Parquet directly; current
+primary catalog query path.
+
+PostgreSQL: relational database. In this project it currently holds a reloadable
+catalog copy/fallback. The proposal adds separate durable serving schemas for
+user-owned profiles and conversations.
+
+JSONB: PostgreSQL's queryable JSON data type. It can hold flexible metadata, but
+ordinary columns are simpler for core fields such as owner, timestamp, role,
+message body, expiry, and topic summary.
+
+Vector / embedding: a numeric representation of text used to find semantically
+similar content. It is derived data and should be deleted when its source memory
+is deleted.
+
+pgvector: a PostgreSQL extension that stores/searches vector values. Proposed for
+topic-memory retrieval, not currently installed or wired in this repository.
+
+Kafka: a durable event log/distribution system that lets independent consumers
+receive asynchronous updates. It is not the system of record for a current user
+profile or a convenient direct query store for recent chats.
+
+Avro: a schema-based binary serialization format for Kafka events. A schema
+registry tracks compatible event-schema versions. It is not the recommended
+searchable row format for the live PostgreSQL conversation store.
+
+Transactional outbox: a database table written in the same transaction as a
+state change. A publisher later sends its events to Kafka, avoiding a lost event
+if the application crashes between saving state and publishing.
+
+At-least-once delivery: the configured producer/broker path retries delivery so
+an event may be received more than once. It depends on correct durable/retry
+configuration; it is not a guarantee against every possible operational loss.
+Consumers use a stable event ID to avoid applying duplicates.
+
+Retrieval falloff: a gradual reduction in how likely an older topic memory is to
+be selected. It is not deletion; a separate expiry/deletion process is mandatory.
+
+Source of detail: reports/final/architecture.md. This handoff is a convenience
+for collaboration, not an implementation specification or a substitute for
+checking source code and operational policy.
