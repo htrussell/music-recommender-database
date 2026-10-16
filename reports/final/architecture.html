@@ -1,0 +1,1056 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Living data architecture blueprint for the music recommender.">
+  <title>Music Recommender | Data Architecture Blueprint</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #162733;
+      --muted: #536977;
+      --paper: #f4f7f6;
+      --panel: #ffffff;
+      --line: #d4e0df;
+      --teal: #087e80;
+      --teal-dark: #075a61;
+      --mint: #e4f5ef;
+      --blue: #e8f0fb;
+      --amber: #fff2d8;
+      --rose: #fff0ed;
+      --shadow: 0 12px 35px rgb(21 53 62 / 8%);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 16px/1.58 "Segoe UI", Arial, sans-serif;
+    }
+    a { color: var(--teal-dark); }
+    code, pre { font-family: Consolas, "Courier New", monospace; }
+    code { overflow-wrap: anywhere; }
+    pre {
+      max-width: 100%;
+      padding: 1rem;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #f7faf9;
+      color: #203642;
+      font-size: .88rem;
+      line-height: 1.48;
+    }
+    .hero {
+      padding: 4rem max(1.25rem, calc((100vw - 1180px) / 2)) 3rem;
+      color: #f3fffb;
+      background:
+        radial-gradient(circle at 85% 12%, rgb(132 227 196 / 25%), transparent 28rem),
+        linear-gradient(125deg, #102b3b, #075b65 72%, #087e80);
+    }
+    .eyebrow {
+      margin: 0 0 .8rem;
+      color: #a8dfd0;
+      font-size: .75rem;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1 { max-width: 850px; margin: 0; font-size: clamp(2.4rem, 6vw, 4.6rem); line-height: 1.03; }
+    .hero p { max-width: 760px; color: #d5e9e5; }
+    .meta { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: 1.6rem; }
+    .pill {
+      display: inline-block;
+      padding: .36rem .72rem;
+      border: 1px solid rgb(255 255 255 / 28%);
+      border-radius: 99px;
+      color: #eafff7;
+      font-size: .83rem;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 245px minmax(0, 1fr);
+      gap: 2rem;
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 5rem;
+    }
+    nav {
+      position: sticky;
+      top: 1rem;
+      align-self: start;
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    nav strong { display: block; margin-bottom: .6rem; color: var(--teal-dark); }
+    nav a {
+      display: block;
+      padding: .25rem .35rem;
+      color: var(--muted);
+      font-size: .86rem;
+      text-decoration: none;
+    }
+    nav a:hover { color: var(--teal); text-decoration: underline; }
+    main { min-width: 0; }
+    section {
+      margin-bottom: 1.5rem;
+      padding: clamp(1.2rem, 3vw, 2.2rem);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      scroll-margin-top: 1rem;
+    }
+    h2 { margin: 0 0 1rem; font-size: clamp(1.5rem, 3vw, 2rem); }
+    h3 { margin: 1.5rem 0 .55rem; color: var(--teal-dark); font-size: 1.14rem; }
+    p, li { color: #344b58; }
+    .lead { max-width: 850px; font-size: 1.08rem; }
+    .note, .warning, .future {
+      margin: 1rem 0;
+      padding: .9rem 1rem;
+      border-left: 4px solid var(--teal);
+      border-radius: 0 10px 10px 0;
+      background: var(--mint);
+    }
+    .warning { border-color: #be7c16; background: var(--amber); }
+    .future { border-color: #647eae; background: var(--blue); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; }
+    .card {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fbfdfc;
+    }
+    .card h3 { margin: .1rem 0 .45rem; }
+    .card p:last-child { margin-bottom: 0; }
+    .metric { color: var(--teal-dark); font-size: 1.55rem; font-weight: 800; }
+    .status { font-size: .77rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+    .status.on { color: #16714e; }
+    .status.partial { color: #91600b; }
+    .status.off { color: #785c88; }
+    .table-wrap { overflow-x: auto; margin: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { padding: .65rem .7rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--teal-dark); background: #eef7f5; font-size: .8rem; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: 0; }
+    .diagram {
+      margin: 1.1rem 0;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fcfefd, #f5f9f8);
+    }
+    .diagram-label { margin: 0 0 .8rem; color: var(--muted); font-size: .78rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+      gap: .55rem;
+    }
+    .node {
+      flex: 1 1 145px;
+      min-width: 130px;
+      padding: .85rem;
+      border: 1px solid #bad7d1;
+      border-radius: 11px;
+      background: #fff;
+    }
+    .node b { display: block; color: var(--teal-dark); }
+    .node small { display: block; margin-top: .25rem; color: var(--muted); }
+    .arrow { align-self: center; color: var(--teal); font-size: 1.45rem; font-weight: 800; }
+    .node.primary { border-color: #4ca79c; background: var(--mint); }
+    .node.secondary { border-style: dashed; border-color: #a8b6c9; background: var(--blue); }
+    .lanes { display: grid; gap: .65rem; }
+    .lane {
+      display: grid;
+      grid-template-columns: 145px minmax(0, 1fr);
+      gap: .75rem;
+      align-items: start;
+      padding: .7rem;
+      border-radius: 11px;
+      background: #edf4f3;
+    }
+    .lane-name { padding: .45rem; color: var(--teal-dark); font-size: .84rem; font-weight: 800; }
+    .activities { display: flex; flex-wrap: wrap; gap: .45rem; }
+    .activity { padding: .42rem .58rem; border: 1px solid var(--line); border-radius: 8px; background: white; font-size: .83rem; }
+    .erd-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: .6rem; }
+    .entity {
+      padding: .7rem;
+      border: 1px solid #a8c8c3;
+      border-radius: 10px;
+      background: #fff;
+      font-size: .83rem;
+    }
+    .entity b { display: block; margin-bottom: .3rem; color: var(--teal-dark); }
+    .entity small { display: block; color: var(--muted); }
+    .relations { margin-top: .8rem; color: var(--muted); font-size: .85rem; }
+    .erd-detail { display: grid; gap: 1rem; }
+    .erd-domain {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fbfdfc;
+    }
+    .erd-domain h4 { margin: 0 0 .35rem; color: var(--teal-dark); font-size: 1rem; }
+    .erd-domain > p { margin: .2rem 0 .8rem; color: var(--muted); font-size: .86rem; }
+    .erd-entities { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
+    .erd-entities.proposed-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .erd-entity {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid #9dbbb7;
+      border-radius: 10px;
+      background: white;
+    }
+    .erd-entity header { padding: .55rem .65rem; color: white; background: #176d70; font-size: .83rem; font-weight: 800; letter-spacing: .035em; }
+    .erd-entity header small { display: block; margin-top: .15rem; color: #d6efea; font-size: .7rem; font-weight: 500; letter-spacing: 0; }
+    .erd-entity ul { display: grid; gap: .24rem; margin: 0; padding: .6rem .65rem .7rem 1.75rem; font: .76rem/1.4 Consolas, "Courier New", monospace; }
+    .erd-entity li { padding-left: .1rem; color: #344b58; overflow-wrap: anywhere; }
+    .erd-entity li.pk { color: #075a61; font-weight: 800; }
+    .erd-entity li.fk { color: #785c35; }
+    .erd-entity.bridge header { background: #536d8a; }
+    .erd-entity.extension header { background: #607c57; }
+    .erd-entity.proposed { border-style: dashed; border-color: #647eae; }
+    .erd-entity.proposed header { background: #50688e; }
+    .erd-relations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: .8rem; }
+    .erd-relation {
+      display: grid;
+      grid-template-columns: minmax(0, .8fr) minmax(0, 1fr) minmax(0, .8fr);
+      gap: .35rem;
+      align-items: center;
+      padding: .55rem .65rem;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: white;
+      font-size: .78rem;
+    }
+    .erd-relation strong { min-width: 0; color: var(--teal-dark); overflow-wrap: anywhere; }
+    .erd-relation .cardinality { min-width: 0; color: var(--muted); text-align: center; font-weight: 700; }
+    .erd-legend { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .75rem; color: var(--muted); font-size: .78rem; }
+    .erd-legend span { display: inline-flex; align-items: center; gap: .35rem; }
+    .legend-key { display: inline-grid; place-items: center; min-width: 1.6rem; padding: .08rem .25rem; border-radius: 4px; color: white; background: #176d70; font: 700 .68rem Consolas, monospace; }
+    .legend-fk { background: #927342; }
+    .legend-bridge { background: #536d8a; }
+    .legend-proposed { background: #50688e; }
+    .erd-flow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: .6rem;
+      align-items: stretch;
+    }
+    .erd-step { padding: .8rem; border: 1px solid var(--line); border-radius: 10px; background: white; }
+    .erd-step b { display: block; margin-bottom: .25rem; color: var(--teal-dark); }
+    .erd-step small { color: var(--muted); }
+    .erd-step.primary { border-color: #4ca79c; background: var(--mint); }
+    .erd-step.future { border-color: #a8b6c9; background: var(--blue); }
+    .erd-arrow { align-self: center; color: var(--teal); font-size: 1.35rem; font-weight: 800; }
+    .arch-flows { display: grid; gap: .85rem; }
+    .arch-flow {
+      display: grid;
+      grid-template-columns: 95px minmax(0, 1fr);
+      gap: .7rem;
+      align-items: center;
+    }
+    .arch-flow-label { color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .arch-flow-track { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: .45rem; align-items: stretch; }
+    .arch-flow-track.compact { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+    .arch-node { min-width: 0; padding: .7rem; border: 1px solid #bad7d1; border-radius: 10px; background: white; }
+    .arch-node b { display: block; color: var(--teal-dark); font-size: .88rem; }
+    .arch-node small { display: block; margin-top: .2rem; color: var(--muted); font-size: .76rem; }
+    .arch-node.primary { border-color: #4ca79c; background: var(--mint); }
+    .arch-node.secondary { border-style: dashed; border-color: #a8b6c9; background: var(--blue); }
+    .arch-arrow { align-self: center; color: var(--teal); font-size: 1.25rem; font-weight: 800; }
+    .arch-flow-note { margin: -.35rem 0 0 95px; color: var(--muted); font-size: .78rem; }
+    .tag { display: inline-block; margin: .15rem; padding: .18rem .48rem; border-radius: 99px; background: var(--blue); }
+    .star {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(110px, 1fr));
+      gap: .55rem;
+      align-items: center;
+      text-align: center;
+    }
+    .star .fact { grid-column: 2 / 5; grid-row: 2; border: 2px solid #4ca79c; background: var(--mint); }
+    .star .dim-a { grid-column: 1; grid-row: 2; }
+    .star .dim-b { grid-column: 2; grid-row: 1; }
+    .star .dim-c { grid-column: 4; grid-row: 1; }
+    .star .dim-d { grid-column: 5; grid-row: 2; }
+    .star .dim-e { grid-column: 3; grid-row: 3; }
+    .star-relations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: .8rem; }
+    .star-relation { padding: .55rem .65rem; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--muted); font-size: .78rem; }
+    .star-relation strong { color: var(--teal-dark); }
+    .mock-dashboard {
+      padding: 1rem;
+      border-radius: 15px;
+      background: #102b3b;
+      color: white;
+    }
+    .mock-dashboard h3 { margin-top: 0; color: #b9e9d8; }
+    .mock-dashboard p, .mock-dashboard td { color: #dfebea; }
+    .mock-dashboard .metric { color: #9ce1c8; }
+    .mock-dashboard th { color: #d9f7eb; background: #184452; }
+    footer { max-width: 1200px; margin: 0 auto; padding: 0 1.5rem 3rem; color: var(--muted); font-size: .85rem; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; max-height: none; display: grid; grid-template-columns: repeat(2, 1fr); }
+      nav strong { grid-column: 1 / -1; }
+      .erd-entities { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .erd-entities.proposed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .arch-flow { grid-template-columns: 1fr; }
+      .arch-flow-track { grid-template-columns: 1fr; }
+      .arch-flow-track.compact { grid-template-columns: 1fr; }
+      .arch-arrow { justify-self: center; transform: rotate(90deg); }
+      .arch-flow-note { margin-left: 0; }
+    }
+    @media (max-width: 620px) {
+      .hero { padding-top: 3rem; }
+      .lane { grid-template-columns: 1fr; }
+      .erd-grid { grid-template-columns: repeat(2, 1fr); }
+      .erd-entities { grid-template-columns: 1fr; }
+      .erd-entities.proposed-grid { grid-template-columns: 1fr; }
+      .erd-relations { grid-template-columns: 1fr; }
+      .erd-relation { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); font-size: .73rem; }
+      .erd-relation .cardinality { grid-column: 1 / -1; grid-row: 2; }
+      .erd-relation strong:last-child { text-align: right; }
+      .erd-flow { grid-template-columns: 1fr; }
+      .erd-arrow { justify-self: center; transform: rotate(90deg); }
+      .star-relations { grid-template-columns: 1fr; }
+      .star { grid-template-columns: repeat(2, 1fr); text-align: left; }
+      .star .fact, .star .dim-a, .star .dim-b, .star .dim-c, .star .dim-d, .star .dim-e { grid-column: auto; grid-row: auto; }
+    }
+    @media print {
+      body { background: white; }
+      .hero { padding: 1.5rem; color: var(--ink); background: white; border-bottom: 2px solid var(--teal); }
+      .hero p, .eyebrow { color: var(--muted); }
+      .pill { border-color: var(--line); color: var(--ink); }
+      .layout { display: block; padding: 1rem; }
+      nav { display: none; }
+      section { break-inside: avoid; box-shadow: none; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">Living architecture blueprint · evidence snapshot 2026-10-16</p>
+    <h1>Music Recommender</h1>
+    <p>A code-grounded description of the current data architecture, its proof of concept, and clearly labeled next steps. Parquet is canonical, DuckDB is the primary AI catalog query path, and PostgreSQL is the relational backup/fallback.</p>
+    <div class="meta">
+      <span class="pill">15-section project outline</span>
+      <span class="pill">Current implementation + proposed analytics</span>
+      <span class="pill"><a href="./architecture.md" style="color:inherit">Detailed Markdown version</a></span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav aria-label="Blueprint sections">
+      <strong>Navigate blueprint</strong>
+      <a href="#s1">1 · Executive summary</a><a href="#s2">2 · Principles</a>
+      <a href="#s3">3 · Process & context</a><a href="#s4">4 · Data domains</a>
+      <a href="#s5">5 · Logical design</a><a href="#s6">6 · Physical POC</a>
+      <a href="#s7">7 · Pipelines</a><a href="#s8">8 · Master data</a>
+      <a href="#s9">9 · Metadata</a><a href="#s10">10 · Quality</a>
+      <a href="#s11">11 · Governance</a><a href="#s12">12 · Security</a>
+      <a href="#s13">13 · Analytics & AI</a><a href="#s14">14 · Target state</a>
+      <a href="#s15">15 · Roadmap & risks</a>
+    </nav>
+
+    <main>
+      <section id="s1">
+        <h2>1. Executive summary</h2>
+        <p class="lead">The system supports music discovery from a listener's natural-language request and optional public YouTube playlist. It uses a catalog-grounded recommendation flow: the API chooses a bounded catalog operation, retrieves candidates, and supplies approved context to a language model.</p>
+        <p>The proposed product goal is to turn a listener-reviewed playlist and stated intent into a useful, explainable queue. Listeners should be able to correct the taste summary, set hard exclusions, refine recommendations in conversation, and explicitly confirm any chat-inferred preference before it is saved. Primary users are listeners; the product owner is the proposed sponsor. Production streaming integration, audio playback, payments, advertising, and fully automated preference capture are outside the proposed demo scope. These are target business requirements, not current demo guarantees.</p>
+        <p class="note">The guide draft describes a PostgreSQL catalog prototype, but the current code-grounded inventory is more specific: Parquet is the canonical catalog, DuckDB is the primary AI query engine, and PostgreSQL is the reloadable backup/fallback. The guide informs business scope; repository code/configuration determine implementation status.</p>
+        <div class="diagram">
+          <p class="diagram-label">Current architecture · requests flow through the API; the model never connects directly to data stores</p>
+          <div class="arch-flows">
+            <div class="arch-flow">
+              <div class="arch-flow-label">Catalog read</div>
+              <div class="arch-flow-track">
+                <div class="arch-node"><b>Browser UI</b><small>Request + session context</small></div><span class="arch-arrow">→</span>
+                <div class="arch-node"><b>FastAPI AI service</b><small>Validate, orchestrate, enforce tool limits</small></div><span class="arch-arrow">→</span>
+                <div class="arch-node primary"><b>DuckDB tools</b><small>Parameterized queries; max 100 results</small></div><span class="arch-arrow">→</span>
+                <div class="arch-node primary"><b>Parquet catalog</b><small>Canonical eight-table snapshot</small></div>
+              </div>
+            </div>
+            <p class="arch-flow-note">DuckDB reads Parquet directly. The source snapshot is not loaded through PostgreSQL for normal AI catalog queries.</p>
+            <div class="arch-flow">
+              <div class="arch-flow-label">Model calls</div>
+              <div class="arch-flow-track compact">
+                <div class="arch-node"><b>FastAPI AI service</b><small>Sends only the prompt/context needed for planning or generation</small></div><span class="arch-arrow">↔</span>
+                <div class="arch-node"><b>Cloudflare Worker</b><small>Configured demo model path; returns plan or response</small></div>
+              </div>
+            </div>
+            <p class="arch-flow-note">The API executes validated tool plans and supplies selected catalog rows to the response model; the Worker has no database credentials or direct database connection.</p>
+            <div class="arch-flow">
+              <div class="arch-flow-label">Fallback</div>
+              <div class="arch-flow-track compact">
+                <div class="arch-node"><b>FastAPI service</b><small>Only if DuckDB path is unavailable/unsupported</small></div><span class="arch-arrow">→</span>
+                <div class="arch-node secondary"><b>PostgreSQL catalog copy</b><small>Read-only allowlisted SELECT; ≤100 rows; 8-second timeout</small></div>
+              </div>
+            </div>
+            <p class="arch-flow-note">PostgreSQL is a reloadable backup/fallback, not the canonical catalog source. User-profile and conversation schemas are future design and must be isolated from the destructive catalog loader.</p>
+          </div>
+        </div>
+        <p><strong>Snapshot size:</strong> 89,741 tracks, 87,152 albums, 39,528 artists, 90,603 genre labels; eight Parquet files total about 13.8 MB compressed. Playlist, profile, and conversation context remain session/request data today; there are no durable chat logs or long-term memories. The separate 4,000-row streaming-habits CSV is a candidate demo-profile seed, not authenticated users or event history. Ollama and <code>nomic-embed-text:v1.5</code> are configured, but no vector index or embedding retrieval is implemented.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Criterion</th><th>Target</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>SC1: bounded catalog access</td><td>Search tools ≤100 rows; verification ≤50 input candidates</td><td>Implemented; verification may return multiple matches per candidate</td></tr>
+            <tr><td>SC2: safe PostgreSQL fallback</td><td>Single allowlisted SELECT; ≤100 rows; 8-second timeout</td><td>Implemented in code and role policy</td></tr>
+            <tr><td>SC3: grounded recommendations</td><td>Resolve selectable tracks to catalog IDs; exclude playlist/recent session tracks</td><td>Implemented in relevant flows; match-rate not measured and fuzzy results can mismatch</td></tr>
+            <tr><td>SC4: catalog freshness</td><td>Updated within 24 hours of source availability</td><td>Not met: manual pipeline, no scheduler/watermark</td></tr>
+            <tr><td>SC5: persistent profile and saved queues (target)</td><td>Owner-scoped profile, playlists, and explicitly saved queues; profile read target &lt;100 ms</td><td>Specified only; no authentication integration or user-serving schema</td></tr>
+            <tr><td>SC6: user events (target)</td><td>Versioned events, duplicate-safe consumers, p95 lag &lt;5 s</td><td>Specified only; no outbox publisher, Kafka event producer, or consumer</td></tr>
+            <tr><td>SC7: model telemetry (target)</td><td>Correlated provider/model/task, latency, outcome, retries; no prompt/completion capture</td><td>Specified only; no structured invocation telemetry or metrics backend</td></tr>
+            <tr><td>SC8: conversation/memory lifecycle (target)</td><td>Owner-scoped recent chat; consolidate aged topics; hard expiry for transcripts and memories</td><td>Specified only; no message store, pgvector, retention scheduler, or deletion workflow</td></tr>
+            <tr><td>SC9: consent and deletion (target)</td><td>Recorded consent before import/persistence; delete saved listener data within 24 hours</td><td>Not implemented or verified; no documented consent gate or end-to-end deletion workflow</td></tr>
+            <tr><td>SC10: transparent import (target)</td><td>Every playlist row accepted or shown with a duplicate, unsupported, incomplete, or other review reason</td><td>Not implemented or verified; no per-row review/outcome contract documented</td></tr>
+            <tr><td>SC11: grounded queue (target)</td><td>Reviewed 100-track playlist; &lt;5 s in ≥95% of runs; respect hard exclusions and cite playlist/confirmed-preference evidence</td><td>Not verified; queue latency, exclusion coverage, and reason provenance need tests</td></tr>
+            <tr><td>SC12: confirmed preferences (target)</td><td>Do not persist chat-inferred preferences before explicit listener confirmation</td><td>Not implemented or verified; no confirmation flow exists</td></tr>
+            <tr><td>SC13: saved queues (target)</td><td>Generated queues remain transient until explicitly saved; saved queues are owner-scoped and reusable</td><td>Not implemented; current queues are session context, with no saved-queue API/schema</td></tr>
+          </tbody>
+        </table></div>
+        <p class="warning">Latency figures are not claimed. The primary DuckDB query path has not been benchmarked to a service-level target; the PostgreSQL fallback has an 8-second statement timeout.</p>
+        <p><strong>Scope:</strong> catalog discovery, playlist import context, static catalog ETL, DuckDB query serving, PostgreSQL backup/fallback, and proposed consent-led import/review, persistent profiles and explicitly saved queues, Kafka/Avro user events, short-lived conversation records, expiring pgvector-backed topic memories, privacy-minimized model telemetry, and analytic projections. The active queue remains session memory until explicit Save; PostgreSQL stores saved queue state and Kafka carries only asynchronous lifecycle events. Persistent chat history is off by default and requires separate opt-in. None of the proposed user/context/event/telemetry infrastructure is implemented. The streaming-habits CSV is a possible seed for demo profiles, but is not integrated yet.</p>
+        <p class="note">The current demo imports public YouTube playlists with <code>yt-dlp</code> and accepts normalized playlist JSON. The guide's import-method decision concerns the future product and remains open. Generated queues are transient today; the target lets the listener explicitly save a chosen queue in PostgreSQL. Queue inputs are imported playlist context and stated/confirmed profile data, not presumed live playback events.</p>
+      </section>
+
+      <section id="s2">
+        <h2>2. Architecture principles</h2>
+        <div class="grid">
+          <article class="card"><h3>Portable canonical layer</h3><p>Keep transformed Parquet as the shared, rebuildable catalog snapshot.</p></article>
+          <article class="card"><h3>Purpose-fit query engines</h3><p>DuckDB reads columnar files directly; PostgreSQL supplies relational backup and fallback.</p></article>
+          <article class="card"><h3>Constrained model access</h3><p>Expose named tools and a validated SQL fallback, never direct model database credentials.</p></article>
+          <article class="card"><h3>Lineage before automation</h3><p>Retain source mapping, snapshot identity, and data-quality results with each build.</p></article>
+          <article class="card"><h3>Consent and listener control</h3><p>Require recorded, purpose-specific consent before import or persistence; support inspect, correct, clear, and delete controls.</p></article>
+          <article class="card"><h3>Explainable, reviewed inputs</h3><p>Queue reasons cite reviewed playlist rows, confirmed preferences, or catalog facts; unconfirmed AI inferences remain suggestions.</p></article>
+          <article class="card"><h3>Session context by default</h3><p>Keep chat history off by default; do not persist listener context without opt-in, retention, and access design.</p></article>
+        </div>
+        <p>Principles 1–3 are implemented. Lineage/quality reporting is partial. Consent, listener control, explainable input provenance, and opt-in chat persistence are target requirements, not implemented capabilities.</p>
+      </section>
+
+      <section id="s3">
+        <h2>3. Business processes and system context</h2>
+        <h3>Process A · Catalog-grounded recommendation</h3>
+        <div class="diagram">
+          <p class="diagram-label">Swimlanes · activity-level BPMN representation</p>
+          <div class="lanes">
+            <div class="lane"><div class="lane-name">Listener / browser</div><div class="activities"><span class="activity">Describe request</span><span class="activity">Supply taste context</span><span class="activity">Review queue</span><span class="activity">Retain session exclusions</span></div></div>
+            <div class="lane"><div class="lane-name">AI API</div><div class="activities"><span class="activity">Choose catalog/no-catalog path</span><span class="activity">Validate tool arguments</span><span class="activity">Retrieve candidates</span><span class="activity">Apply fallback if needed</span><span class="activity">Validate response</span></div></div>
+            <div class="lane"><div class="lane-name">DuckDB / Parquet</div><div class="activities"><span class="activity">Run parameterized tool</span><span class="activity">Return ≤100 rows</span></div></div>
+            <div class="lane"><div class="lane-name">Model runtime · demo Cloudflare</div><div class="activities"><span class="activity">Plan tool / SQL</span><span class="activity">Generate response from supplied context</span><span class="activity">Local Ollama generation is an option, not current wiring</span></div></div>
+          </div>
+        </div>
+        <div class="diagram">
+          <p class="diagram-label">Model deployment choices · catalog access always remains behind the API</p>
+          <div class="flow">
+            <div class="node primary"><b>Current demo · cloud models</b><small>Browser → FastAPI → DuckDB/Parquet; selected prompts/context → Cloudflare Worker</small></div>
+            <div class="node"><b>Local-only deployment · possible</b><small>Browser → local FastAPI + generation runtime (e.g. Ollama) → DuckDB/Parquet or PostgreSQL fallback</small></div>
+            <div class="node secondary"><b>Hybrid deployment · possible</b><small>Local API/catalog/model with selected calls routed to cloud provider under data policy</small></div>
+          </div>
+          <p class="relations">The configured Ollama <code>nomic-embed-text:v1.5</code> is for embeddings and is not the current generation model. A local generation mode would require a separate model/runtime configuration and tool/structured-output capability checks.</p>
+        </div>
+        <p>Local hosting can keep prompts and selected catalog rows on the operator's server, but still requires access controls, monitoring, secure storage, and sufficient CPU/GPU capacity. Cloud models add network dependence, provider availability and rate limits, latency, usage cost, terms/retention and data-residency review, model-version drift, and vendor dependence. The model provider receives only approved context; it never gets database credentials or a direct database connection.</p>
+        <h3>Process B · Playlist-grounded discovery</h3>
+        <div class="diagram">
+          <p class="diagram-label">Swimlanes · public playlist import to queue</p>
+          <div class="lanes">
+            <div class="lane"><div class="lane-name">Listener / browser</div><div class="activities"><span class="activity">Submit public URL</span><span class="activity">Review / save imported playlist</span><span class="activity">Request discovery</span><span class="activity">Exclude imported/recent tracks</span></div></div>
+            <div class="lane"><div class="lane-name">Local AI API</div><div class="activities"><span class="activity">Validate YouTube host and playlist ID</span><span class="activity">Fetch via yt-dlp</span><span class="activity">Normalize playlist entries</span><span class="activity">Skip redundant catalog plan when configured</span></div></div>
+            <div class="lane"><div class="lane-name">Catalog / Worker</div><div class="activities"><span class="activity">Find candidates when needed</span><span class="activity">Generate recommendations from playlist context</span></div></div>
+          </div>
+        </div>
+        <p class="future">Target flow, not implemented: require recorded purpose-specific consent before import or persistence; preserve source order and a status/reason for every row; show duplicates, unsupported/incomplete rows, and ambiguous matches for listener review; use only reviewed rows to produce a corrected taste summary and queue. Explain each item with reviewed-playlist, confirmed-preference, or explicit catalog evidence, and enforce hard exclusions before returning the queue. The current normalizer does not itself establish these review or lineage guarantees.</p>
+        <div class="diagram">
+          <p class="diagram-label">Proposed listener control points · consent → review → explain → confirm</p>
+          <div class="lanes">
+            <div class="lane"><div class="lane-name">Listener</div><div class="activities"><span class="activity">Grant consent</span><span class="activity">Review every import row</span><span class="activity">Correct taste summary</span><span class="activity">Set exclusions</span><span class="activity">Review explained queue</span><span class="activity">Save selected queue</span><span class="activity">Confirm/reject suggestions</span><span class="activity">Manage/delete saved data</span></div></div>
+            <div class="lane"><div class="lane-name">API</div><div class="activities"><span class="activity">Check consent</span><span class="activity">Validate and preserve row outcomes</span><span class="activity">Apply hard exclusions</span><span class="activity">Attach reason evidence</span><span class="activity">Save selected queue to PostgreSQL</span><span class="activity">Persist only with consent/confirmation</span></div></div>
+            <div class="lane"><div class="lane-name">AI</div><div class="activities"><span class="activity">Summarize for correction</span><span class="activity">Propose queue and reasons</span><span class="activity">Suggest, never auto-save inferred preferences</span></div></div>
+          </div>
+        </div>
+        <h3>Process-to-data summary</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Step / data object</th><th>Operation</th><th>Boundary</th></tr></thead>
+          <tbody>
+            <tr><td>Request text, task, system instruction, taste context</td><td>Read</td><td>Browser → API; selected context may go to Worker</td></tr>
+            <tr><td>Public playlist URL and normalized playlist tracks</td><td>Read / create</td><td>Local yt-dlp fetch; browser session, not catalog storage</td></tr>
+            <tr><td>Tool name and arguments</td><td>Create / validate</td><td>Worker proposal constrained by API schemas</td></tr>
+            <tr><td>Tracks, artists, genres, audio features, albums, scores</td><td>Read</td><td>DuckDB over Parquet; PostgreSQL only fallback</td></tr>
+            <tr><td>Catalog-grounded response / candidate identities</td><td>Create / read</td><td>Model output checked/normalized; verification may be fuzzy</td></tr>
+            <tr><td>Queue, taste notes, recent-track exclusions</td><td>Create / read / update</td><td>Browser-session state; no profile table</td></tr>
+            <tr><td>Demo profile (proposed)</td><td>Read</td><td>Seed CSV has listener ID, top artist/genre, and summary attributes; no track IDs or login identity mapping</td></tr>
+            <tr><td>Source CSV rows and catalog snapshot</td><td>Read / create</td><td>Manual batch transform; optional full PostgreSQL reload</td></tr>
+            <tr><td>Purpose-specific consent (target)</td><td>Create / read / withdraw</td><td>Gate playlist import and persistence; current consent gate is not documented</td></tr>
+            <tr><td>Import row outcomes (target)</td><td>Create / review / update</td><td>Every source row has accepted or visible exception status and reason; ambiguous rows cannot ground recommendations</td></tr>
+            <tr><td>Corrected taste summary and preference confirmation (target)</td><td>Read / update / confirm</td><td>Listener correction is personal profile data; AI inference stays a suggestion until explicitly confirmed</td></tr>
+            <tr><td>Queue reasons and hard exclusions (target)</td><td>Read / validate / create</td><td>Each returned item cites reviewed playlist, confirmed preference, or catalog evidence; exclusions are enforced before return</td></tr>
+            <tr><td>Listener explicitly saves a queue (target)</td><td>Create / read / rename / delete</td><td>Active queue stays in session until Save; PostgreSQL stores owner-scoped ordered tracks and minimal reason evidence; Kafka event is asynchronous metadata only</td></tr>
+            <tr><td>Listener deletion (target)</td><td>Delete</td><td>24-hour demo target includes dependent memories, embeddings, caches, projections, and backup expiry</td></tr>
+          </tbody>
+        </table></div>
+        <p><strong>Context:</strong> sources are Kaggle CSVs; <code>transform_erd.py</code> creates Parquet; DuckDB is primary; PostgreSQL 15 is the reloadable fallback; FastAPI routes requests; Cloudflare Worker provides model calls; Ollama is configured for local embeddings only. Kafka, ZooKeeper, Spark, HDFS, and Jupyter are optional Compose infrastructure, not connected to the main catalog path.</p>
+      </section>
+
+      <section id="s4">
+        <h2>4. Data domains and conceptual model</h2>
+        <div class="diagram">
+          <p class="diagram-label">Current catalog ERD · keys and cardinalities · implemented relational/Parquet model</p>
+          <div class="erd-detail">
+            <div class="erd-domain">
+              <h4>Music catalog entities</h4>
+              <p>PK = primary key; FK = foreign key; ? = nullable in PostgreSQL DDL. Parquet files carry these columns but do not enforce relational constraints.</p>
+              <div class="erd-entities">
+                <article class="erd-entity">
+                  <header>GENRE<small>One normalized display label per snapshot ID</small></header>
+                  <ul><li class="pk">PK genre_id</li><li>genre_name</li></ul>
+                </article>
+                <article class="erd-entity">
+                  <header>ALBUM<small>Catalog album identity and release attributes</small></header>
+                  <ul><li class="pk">PK album_id</li><li class="fk">FK? genre_id</li><li>album_name</li><li>album_format</li><li>release_date</li><li>label</li></ul>
+                </article>
+                <article class="erd-entity extension">
+                  <header>ALBUM_SCORES<small>Optional 1:1 rating extension</small></header>
+                  <ul><li class="pk">PK/FK album_id</li><li>Metacritic scores/counts</li><li>AOTY scores/counts</li></ul>
+                </article>
+                <article class="erd-entity">
+                  <header>TRACKS<small>One row per source track ID</small></header>
+                  <ul><li class="pk">PK track_id</li><li class="fk">FK? album_id</li><li class="fk">FK? genre_id</li><li>track_name</li><li>popularity</li><li>duration_ms</li><li>explicit</li></ul>
+                </article>
+                <article class="erd-entity extension">
+                  <header>TRACK_FEEL<small>Optional 1:1 audio-feature extension</small></header>
+                  <ul><li class="pk">PK/FK track_id</li><li>danceability, energy</li><li>key, loudness, mode</li><li>speechiness, acousticness</li><li>instrumentalness, liveness</li><li>valence, tempo, time_signature</li></ul>
+                </article>
+                <article class="erd-entity bridge">
+                  <header>TRACK_ARTISTS<small>Associative bridge · many-to-many</small></header>
+                  <ul><li class="pk">PK/FK track_id</li><li class="pk">PK/FK artist_id</li><li>Composite primary key</li></ul>
+                </article>
+                <article class="erd-entity">
+                  <header>ARTISTS<small>Catalog artist identity</small></header>
+                  <ul><li class="pk">PK artist_id</li><li>artist_name</li><li>artist_country</li><li>artist_popularity</li></ul>
+                </article>
+                <article class="erd-entity bridge">
+                  <header>ARTIST_GENRES<small>Associative bridge · artist tags</small></header>
+                  <ul><li class="pk">PK/FK artist_id</li><li class="pk">PK/FK genre_id</li><li>Composite primary key</li></ul>
+                </article>
+              </div>
+              <div class="erd-relations" aria-label="Current catalog relationships">
+                <div class="erd-relation"><strong>GENRE</strong><span class="cardinality">1 ── 0..*</span><strong>ALBUM</strong></div>
+                <div class="erd-relation"><strong>GENRE</strong><span class="cardinality">1 ── 0..*</span><strong>TRACKS</strong></div>
+                <div class="erd-relation"><strong>ALBUM</strong><span class="cardinality">1 ── 0..*</span><strong>TRACKS</strong></div>
+                <div class="erd-relation"><strong>ALBUM</strong><span class="cardinality">1 ── 0..1</span><strong>ALBUM_SCORES</strong></div>
+                <div class="erd-relation"><strong>TRACKS</strong><span class="cardinality">1 ── 0..1</span><strong>TRACK_FEEL</strong></div>
+                <div class="erd-relation"><strong>TRACKS</strong><span class="cardinality">1 ── 0..*</span><strong>TRACK_ARTISTS</strong></div>
+                <div class="erd-relation"><strong>ARTISTS</strong><span class="cardinality">1 ── 0..*</span><strong>TRACK_ARTISTS</strong></div>
+                <div class="erd-relation"><strong>ARTISTS</strong><span class="cardinality">1 ── 0..*</span><strong>ARTIST_GENRES</strong></div>
+                <div class="erd-relation"><strong>GENRE</strong><span class="cardinality">1 ── 0..*</span><strong>ARTIST_GENRES</strong></div>
+              </div>
+              <div class="erd-legend">
+                <span><i class="legend-key">PK</i> primary key</span>
+                <span><i class="legend-key legend-fk">FK</i> foreign key</span>
+                <span><i class="legend-key legend-bridge">BR</i> associative bridge</span>
+                <span>1 ── 0..* = one parent to zero or many child rows</span>
+                <span>0..1 = optional single child</span>
+              </div>
+            </div>
+            <div class="erd-domain">
+              <h4>Proposed user-serving ERD · separate from catalog backup</h4>
+              <p>Future design only. PostgreSQL is proposed as the current-state authority; the Kafka event stream is asynchronous and does not replace serving tables. Purpose-specific consent gates import and persistence. The working queue stays transient until the listener explicitly saves it.</p>
+              <div class="erd-entities proposed-grid">
+                <article class="erd-entity proposed">
+                  <header>APP_USER<small>Authenticated owner</small></header>
+                  <ul><li class="pk">PK user_id</li><li>UNIQUE auth_subject</li><li>created_at / deleted_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>USER_PROFILE<small>Current account context</small></header>
+                  <ul><li class="pk">PK/FK user_id</li><li>display_name?</li><li>listener-reviewed taste summary/version</li><li>profile_version / updated_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>CONSENT_EVENT<small>Purpose-specific decision history</small></header>
+                  <ul><li class="pk">PK consent_event_id</li><li class="fk">FK user_id</li><li>purpose / decision</li><li>policy_version / recorded_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>USER_PREFERENCE<small>Typed user taste</small></header>
+                  <ul><li class="pk">PK preference_id</li><li class="fk">FK user_id</li><li>type / value / weight?</li><li>catalog key / build?</li><li>source / confirmed_at?</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>USER_PLAYLIST<small>Saved playlist header</small></header>
+                  <ul><li class="pk">PK playlist_id</li><li class="fk">FK user_id</li><li>name / source</li><li>created_at / updated_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>PLAYLIST_TRACK<small>Ordered entries; external track reference</small></header>
+                  <ul><li class="pk">PK playlist_id + position</li><li class="fk">FK playlist_id</li><li>catalog_track_id?</li><li>title / artist snapshot</li><li>import status / reason</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>SAVED_QUEUE<small>Listener-selected durable queue</small></header>
+                  <ul><li class="pk">PK queue_id</li><li class="fk">FK user_id</li><li>queue_name?</li><li>catalog_build_id / created_at / updated_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>SAVED_QUEUE_TRACK<small>Ordered track + explanation evidence</small></header>
+                  <ul><li class="pk">PK queue_id + position</li><li class="fk">FK queue_id</li><li>catalog_track_id</li><li>title / artist snapshot</li><li>reason / evidence ref</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>EVENT_OUTBOX<small>Transactional publish queue</small></header>
+                  <ul><li class="pk">PK event_id</li><li class="fk">FK user_id</li><li>event_type / version</li><li>payload / published_at?</li></ul>
+                </article>
+              </div>
+              <div class="erd-relations" aria-label="Proposed user-state relationships">
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..1</span><strong>USER_PROFILE</strong></div>
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..*</span><strong>CONSENT_EVENT</strong></div>
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..*</span><strong>USER_PREFERENCE</strong></div>
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..*</span><strong>USER_PLAYLIST</strong></div>
+                <div class="erd-relation"><strong>USER_PLAYLIST</strong><span class="cardinality">1 ── 0..*</span><strong>PLAYLIST_TRACK</strong></div>
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..*</span><strong>SAVED_QUEUE</strong></div>
+                <div class="erd-relation"><strong>SAVED_QUEUE</strong><span class="cardinality">1 ── 1..*</span><strong>SAVED_QUEUE_TRACK</strong></div>
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..*</span><strong>EVENT_OUTBOX</strong></div>
+                <div class="erd-relation"><strong>CATALOG TRACK</strong><span class="cardinality">1 ← 0..* resolved</span><strong>PLAYLIST_TRACK</strong></div>
+              </div>
+              <p class="relations">Resolved catalog track IDs are stable external IDs, not foreign keys to build-local generated catalog IDs. Only reviewed import rows and confirmed preferences may ground queue explanations. A generated queue becomes durable only on explicit Save; queue contents/reason snapshots live in PostgreSQL, while Kafka receives minimal lifecycle events. Chat history is off by default and requires separate opt-in.</p>
+            </div>
+            <div class="erd-domain">
+              <h4>Proposed conversation-memory ERD · short-lived transcript to expiring topic context</h4>
+              <p>Separate PostgreSQL schema/database. Only compact topic memories receive pgvector embeddings; messages and summaries remain user-owned personal data. Persistent history is off by default and requires separate opt-in.</p>
+              <div class="erd-entities proposed-grid">
+                <article class="erd-entity proposed">
+                  <header>APP_USER<small>Shared internal user identity</small></header>
+                  <ul><li class="pk">PK user_id</li><li>resolved by trusted API</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>CONVERSATION<small>Transcript lifecycle</small></header>
+                  <ul><li class="pk">PK conversation_id</li><li class="fk">FK user_id</li><li>created_at / last_activity</li><li>transcript_expires_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>MESSAGE<small>Ordered short-lived log</small></header>
+                  <ul><li class="pk">PK message_id</li><li class="fk">FK conversation_id</li><li>sequence_no / role</li><li>body_text / created_at</li><li>expires_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>TOPIC_MEMORY<small>Consolidated, retrievable context</small></header>
+                  <ul><li class="pk">PK memory_id</li><li class="fk">FK user_id</li><li>topic / summary_text</li><li>embedding + model version</li><li>confidence / importance</li><li>last_retrieved / expires_at</li></ul>
+                </article>
+                <article class="erd-entity proposed">
+                  <header>MEMORY_SOURCE<small>Minimal deletion provenance</small></header>
+                  <ul><li class="pk">PK memory_id + source ID</li><li class="fk">FK memory_id</li><li class="fk">FK source_conversation_id</li><li>no transcript content</li></ul>
+                </article>
+              </div>
+              <div class="erd-relations" aria-label="Proposed conversation-memory relationships">
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..*</span><strong>CONVERSATION</strong></div>
+                <div class="erd-relation"><strong>CONVERSATION</strong><span class="cardinality">1 ── 0..*</span><strong>MESSAGE</strong></div>
+                <div class="erd-relation"><strong>APP_USER</strong><span class="cardinality">1 ── 0..*</span><strong>TOPIC_MEMORY</strong></div>
+                <div class="erd-relation"><strong>TOPIC_MEMORY</strong><span class="cardinality">1 ── 0..*</span><strong>MEMORY_<wbr>SOURCE</strong></div>
+                <div class="erd-relation"><strong>CONVERSATION</strong><span class="cardinality">1 ── 0..*</span><strong>MEMORY_<wbr>SOURCE</strong></div>
+              </div>
+              <p class="relations">Summarize and persist a useful memory before deleting its transcript. Expiry/deletion removes the summary, vector, and source links. Retrieval falloff affects ranking but does not extend or replace hard expiry.</p>
+            </div>
+          </div>
+        </div>
+        <h3>Observed inventory</h3>
+        <p>Measured from local files on 2026-10-16. Parquet sizes are compressed; growth is unknown because there is no retained refresh history.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Entity / domain</th><th>Source</th><th>Rows</th><th>Parquet bytes</th><th>Approx bytes/row</th><th>Growth</th></tr></thead>
+          <tbody>
+            <tr><td>tracks</td><td>dataset.csv: 114,000 input rows, deduped by Spotify ID</td><td>89,741</td><td>3,574,158</td><td>39.8</td><td>Unknown</td></tr>
+            <tr><td>track_feel</td><td>Dataset audio features</td><td>89,741</td><td>3,350,483</td><td>37.3</td><td>Unknown</td></tr>
+            <tr><td>track_artists</td><td>Semicolon-separated track credits</td><td>123,424</td><td>1,794,078</td><td>14.5</td><td>Unknown</td></tr>
+            <tr><td>album</td><td>Tracks + album_ratings.csv (32,358 rows)</td><td>87,152</td><td>1,489,870</td><td>17.1</td><td>Unknown</td></tr>
+            <tr><td>album_scores</td><td>Matched rating rows</td><td>32,313</td><td>266,940</td><td>8.3</td><td>Unknown</td></tr>
+            <tr><td>artists</td><td>Credits + artists.csv (1,466,083 source rows)</td><td>39,528</td><td>659,917</td><td>16.7</td><td>Unknown</td></tr>
+            <tr><td>artist_genres</td><td>Matched MusicBrainz/Last.fm tags</td><td>669,441</td><td>1,582,516</td><td>2.4</td><td>Unknown</td></tr>
+            <tr><td>genre</td><td>Track, album, and artist-tag labels</td><td>90,603</td><td>1,078,276</td><td>11.9</td><td>Unknown</td></tr>
+            <tr><td>Demo listener profile (proposed)</td><td>music_streaming_habits_2026.csv</td><td>4,000</td><td>340,693 CSV</td><td>85.2</td><td>Static seed</td></tr>
+          </tbody>
+        </table></div>
+        <p class="note">Eight catalog Parquet files total ~13.8 MB (13.2 MiB). The separate <code>music_streaming_habits_2026.csv</code> has 4,000 rows and may seed demo profiles; it is not application interaction telemetry.</p>
+        <h3>Access patterns</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>ID</th><th>Read/write pattern</th><th>Frequency / target</th><th>Consumer</th></tr></thead>
+          <tbody>
+            <tr><td>AP1</td><td>Filter tracks by title, artist, genre, duration, energy, explicitness, exclusions; rank by popularity.</td><td>Per recommendation; &lt;5s p95 target, unmeasured</td><td>AI API / listener</td></tr>
+            <tr><td>AP2</td><td>Resolve up to 50 candidate titles/artist credits; optional MusicBrainz exact-title index.</td><td>Per verification request; &lt;5s target, unmeasured</td><td>AI API</td></tr>
+            <tr><td>AP3</td><td>Search albums by title/genre/year/critic score.</td><td>On album request; &lt;5s target, unmeasured</td><td>AI API</td></tr>
+            <tr><td>AP4</td><td>Aggregate track count, popularity, audio features, explicit percentage by genre.</td><td>On comparison; &lt;5s target, unmeasured</td><td>AI API / analyst</td></tr>
+            <tr><td>AP5</td><td>Allowlisted bounded PostgreSQL SELECT fallback.</td><td>Exception path; 8s statement timeout, ≤100 rows</td><td>AI API</td></tr>
+            <tr><td>AP6/AP7</td><td>Manual source transform / Parquet-to-PostgreSQL batch reload.</td><td>On demand; no freshness target</td><td>Maintainer</td></tr>
+            <tr><td>AP8</td><td>Ad hoc catalog analysis against Parquet/SQL.</td><td>Development/class project</td><td>Analyst</td></tr>
+            <tr><td>AP9 (proposed)</td><td>Resolve a demo profile by verified identity; use top artist and curated genre aliases to retrieve catalog tracks.</td><td>Each demo login/request; &lt;100ms profile read and &lt;5s total target, unmeasured</td><td>AI API / listener</td></tr>
+            <tr><td>AP10 (target)</td><td>Read/update owner-scoped profile, preferences, saved playlists and ordered entries.</td><td>Login/profile edit/playlist save; &lt;100ms profile read target, unmeasured</td><td>API / listener</td></tr>
+            <tr><td>AP11 (target)</td><td>Publish versioned user activity/profile events; consume asynchronously for projections and analytics.</td><td>Per eligible action; p95 consumer lag &lt;5s target, unmeasured</td><td>API / Kafka consumers</td></tr>
+            <tr><td>AP12 (target)</td><td>Append privacy-minimized model-call metadata; aggregate operational/analytic metrics without prompt, response, or account identity.</td><td>Every model call; collector/export freshness and overhead SLO TBD</td><td>API / operations / analyst</td></tr>
+            <tr><td>AP13 (target)</td><td>Read a bounded recent-message window and relevant, unexpired topic memories; consolidate cold logs and expire/delete both layers.</td><td>Each conversation turn plus background aging/cleanup; retrieval SLO TBD</td><td>Conversation API / listener</td></tr>
+            <tr><td>AP14 (target)</td><td>Check and record purpose-specific consent; process withdrawal/deletion across listener-owned and derived records.</td><td>Before import/persistence and on listener request; deletion within 24 hours target, unverified</td><td>Listener API / privacy owner</td></tr>
+            <tr><td>AP15 (target)</td><td>Validate and review every imported row; create a queue from reviewed inputs with reasons and hard exclusions.</td><td>Per import/request; reviewed 100-track queue &lt;5 s p95 in ≥95% of runs, unverified</td><td>Import / recommendation API / listener</td></tr>
+            <tr><td>AP16 (target)</td><td>Save, list, reopen, rename, and delete a listener-selected queue with ordered tracks and minimal reason evidence.</td><td>On explicit save and later queue management; saved-queue read &lt;100 ms target, unmeasured</td><td>Listener API / listener</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="s5">
+        <h2>5. Logical design</h2>
+        <h3>Model assignment</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Domain</th><th>Current model</th><th>Patterns / rationale</th></tr></thead>
+          <tbody>
+            <tr><td>Catalog entities</td><td>Canonical Parquet + DuckDB SQL views</td><td>AP1–AP4, AP6; structured, columnar queries without a second query copy.</td></tr>
+            <tr><td>Relational backup</td><td>PostgreSQL tables with PK/FK</td><td>AP5/AP7; backup and compatible fallback, not primary.</td></tr>
+            <tr><td>Listener context</td><td>Browser-session JSON / request payload</td><td>AP1/AP2; no durable profile store is present.</td></tr>
+            <tr><td>Persistent user state (proposed)</td><td>PostgreSQL <code>user_data</code> schema</td><td>Authoritative profiles, reviewed summaries, preferences, consent history, playlists, and listener-selected saved queues with ordered tracks/reason evidence; only persist after the applicable consent/review gate.</td></tr>
+            <tr><td>Demo listener profile (proposed)</td><td>Seeded profile/preference rows in PostgreSQL</td><td>4,000 unique sample IDs and summary preferences; identity mapping and genre crosswalk required; no current integration. AP9.</td></tr>
+            <tr><td>User-event stream (proposed)</td><td>Kafka + Avro + schema registry</td><td>Outbox-backed, at-least-once changes for derived projections/analytics; not the login-time profile store.</td></tr>
+            <tr><td>Conversation history and topic memory (proposed)</td><td>PostgreSQL <code>conversation_data</code> + pgvector on topic summaries only</td><td>Short-lived message rows; consolidate useful older topics; separate hard expiries for transcript and summary.</td></tr>
+            <tr><td>Model telemetry (proposed)</td><td>OpenTelemetry + separate Avro Kafka topic</td><td>Operational latency/outcome metrics and sanitized invocation analytics; no prompts, completions, or account IDs.</td></tr>
+            <tr><td>Optional MusicBrainz verifier</td><td>Parquet title index</td><td>AP2; separate operator-supplied source.</td></tr>
+            <tr><td>Catalog vector retrieval</td><td>None implemented</td><td>Ollama embedding model configured only; no catalog chunk/index. Proposed pgvector memory search is a separate user-context function, not catalog retrieval.</td></tr>
+            <tr><td>Analytics</td><td>Parquet/SQL now; star schema proposed</td><td>AP4/AP8; no persisted warehouse facts today.</td></tr>
+          </tbody>
+        </table></div>
+        <h3>Relational logical model</h3>
+        <pre>genre(genre_id PK, genre_name)
+artists(artist_id PK, artist_name, artist_country, artist_popularity)
+album(album_id PK, genre_id FK?, album_name, album_format, release_date, label)
+tracks(track_id PK, album_id FK?, genre_id FK?, track_name, popularity,
+       duration_ms, explicit)
+album_scores(album_id PK/FK, metacritic_critic_score/count,
+             metacritic_user_score/count, aoty_critic_score/count,
+             aoty_user_score/count)
+track_feel(track_id PK/FK, danceability, energy, key, loudness, mode,
+           speechiness, acousticness, instrumentalness, liveness, valence,
+           tempo, time_signature)
+track_artists(track_id PK/FK, artist_id PK/FK)
+artist_genres(artist_id PK/FK, genre_id PK/FK)</pre>
+        <p>Foreign-key optionality is shown by “?” for album/genre IDs in the current DDL; transformation currently populates every track album ID. All descriptive columns are nullable in DDL. Composite bridge PKs prevent duplicate relationships. No deliberate denormalization is used in the relational core.</p>
+        <h3>Data dictionary</h3>
+        <p>The complete dictionary is maintained in the <a href="./architecture.md#data-dictionary">Markdown version</a>: every attribute has a logical type, nullability, key role, meaning, and applicable rule. Summary: IDs and counts are integer; identifiers/titles/codes are text; popularity/scores/audio measurements are decimal; explicit is boolean. PK/FK relationships are identical to the logical model above.</p>
+        <h3>Business rules</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>ID</th><th>Rule</th><th>Enforcement</th></tr></thead>
+          <tbody>
+            <tr><td>BR1</td><td>Case-fold/trim/collapse whitespace for matching; deterministic display; sorted sequential IDs.</td><td>Transform code; IDs can shift across snapshots.</td></tr>
+            <tr><td>BR2</td><td>One track per Spotify ID; max popularity duplicate row; modal genre; preserve distinct credited artists.</td><td>Transform and uniqueness assertion; DB PKs.</td></tr>
+            <tr><td>BR3</td><td>Rating genre wins for album; otherwise modal linked track genre.</td><td>Transform.</td></tr>
+            <tr><td>BR4</td><td>Preserve year/year-month/full-date precision; invalid day falls back to year-month.</td><td>Transform; release date stored as text.</td></tr>
+            <tr><td>BR5</td><td>Match ratings by normalized title and credited artist; retain unmatched; select most complete duplicate.</td><td>Transform and album_scores PK.</td></tr>
+            <tr><td>BR6</td><td>Child and bridge rows reference parents.</td><td>Transform assertions and PostgreSQL FKs; Parquet itself has no FK constraints.</td></tr>
+            <tr><td>BR7/8</td><td>Model reads are bounded, typed, allowlisted, and read-only.</td><td>API validator, Pydantic, DB role, timeout and row caps.</td></tr>
+            <tr><td>BR13</td><td>Recorded purpose-specific consent gates import and personal-data persistence, including saved queues; conversation history is off by default and separately opt-in.</td><td>Target consent ledger/API gate and withdrawal handling; not implemented.</td></tr>
+            <tr><td>BR14</td><td>Every imported row has a visible accepted or exception outcome; ambiguous/unreviewed rows cannot ground recommendations.</td><td>Target row status/reason, review UI, lineage, and completeness tests; not implemented.</td></tr>
+            <tr><td>BR15</td><td>Chat-inferred preferences are not durable recommendation inputs until explicitly confirmed.</td><td>Target confirmation action and persisted provenance/time; not implemented.</td></tr>
+            <tr><td>BR16</td><td>Every queue item respects hard exclusions and cites reviewed-playlist, confirmed-preference, or catalog evidence.</td><td>Target recommendation validation and reason provenance; not implemented.</td></tr>
+            <tr><td>BR17</td><td>Listener deletion removes saved profile, playlist, queue, conversation, and derived personal data within 24 hours in the demo.</td><td>Target end-to-end deletion and verification including caches, projections, embeddings, and backup expiry; not implemented.</td></tr>
+            <tr><td>BR18</td><td>Generated taste summaries remain editable; persist profile context only after listener review/approval and retain version.</td><td>Store approved text/version/time and keep drafts request-scoped; not implemented.</td></tr>
+            <tr><td>BR19</td><td>Keep a generated queue transient until explicit Save; saved queue entries and evidence are owner-scoped and deletable.</td><td>PostgreSQL parent/child tables, explicit-save API action, lifecycle event, owner/deletion tests; not implemented.</td></tr>
+          </tbody>
+        </table></div>
+        <p class="future">No document collections or vector chunks exist. If added, their schemas, embedding versions, source-entity keys, refresh/deletion behavior, and model access contract must be added here first.</p>
+        <h3>Target user-serving schema</h3>
+        <pre>        app_user(user_id PK, auth_subject UNIQUE, created_at, deleted_at?)
+user_profile(user_id PK/FK, display_name?, taste_summary_text?,
+             taste_summary_version, taste_summary_confirmed_at?,
+             updated_at, profile_version)
+        consent_event(consent_event_id PK, user_id FK, purpose, decision,
+                      policy_version, recorded_at)
+        user_preference(user_id FK, preference_type, preference_value,
+                        weight?, catalog_entity_key?, catalog_build_id?,
+                        source, confirmed_at?)
+        user_playlist(playlist_id PK, user_id FK, name, source, updated_at)
+        user_playlist_track(playlist_id FK, position, catalog_track_id?,
+                            title_snapshot, artist_snapshot, import_status,
+                            review_reason?, reviewed_at?)
+        saved_queue(queue_id PK, user_id FK, queue_name?, catalog_build_id,
+                    created_at, updated_at)
+        saved_queue_track(queue_id FK, position, catalog_track_id, title_snapshot,
+                          artist_snapshot, reason_text, evidence_type/reference/snapshot)
+        event_outbox(event_id PK, user_id, event_type, schema_version,
+                     payload, created_at, published_at?)</pre>
+                <p class="future">Proposed PostgreSQL state is authoritative for profile/login reads. The latest consent decision gates import and persistence. Persist a taste summary only after listener review/approval; unconfirmed AI suggestions remain request-scoped, and confirmed inferred preferences retain provenance/time. Import rows retain a visible status/reason. The working queue stays transient until explicit Save; PostgreSQL stores owner-scoped ordered tracks and minimal reason evidence, while Kafka carries a versioned lifecycle event. Profile/playlist/queue mutation and outbox insertion commit together. Playlist and queue tracks retain stable external catalog IDs rather than foreign keys to generated catalog IDs. Full DDL and field constraints are in the Markdown blueprint.</p>
+        <h3>Target conversation and AI-memory records</h3>
+        <pre>conversation_data.conversation(
+  conversation_id PK, user_id FK, created_at, last_activity_at,
+  transcript_expires_at, deleted_at?)
+conversation_data.message(
+  message_id PK, conversation_id FK, sequence_no,
+  role, body_text, created_at, expires_at)
+conversation_data.topic_memory(
+  memory_id PK, user_id FK, topic_key, summary_text,
+  embedding vector(model_dimensions), embedding_model/version,
+  confidence, importance, created_at, last_retrieved_at?,
+  expires_at, status, memory_version)
+conversation_data.memory_source(
+  memory_id FK, source_conversation_id, composite PK)</pre>
+        <p class="future">Keep <code>user_data</code> and <code>conversation_data</code> as separate schemas (or databases) on the serving PostgreSQL system, with distinct roles/migrations. The catalog loader must never touch either. Store messages/summaries as searchable text and structured columns; JSONB is optional for bounded auxiliary metadata. Use pgvector only for compact topic memories, not every message; select dimensions from a versioned embedding model. The extension is not installed/configured in this project; verify availability and permissions before implementation. Start with exact search and user/expiry filters; benchmark before adding HNSW/IVFFlat. Neither schema belongs in the model-generated SQL allowlist.</p>
+      </section>
+
+      <section id="s6">
+        <h2>6. Physical design and proof of concept</h2>
+        <div class="grid">
+          <article class="card"><h3>Canonical</h3><p>Zstandard Parquet; portable compact snapshot; primary source for DuckDB and reload.</p></article>
+          <article class="card"><h3>Primary query</h3><p>DuckDB in-memory connection creates views with <code>read_parquet</code>; tool API is parameterized and bounded.</p></article>
+          <article class="card"><h3>Backup / fallback</h3><p>PostgreSQL 15 with relational PK/FK constraints; batch load is full refresh, not incremental.</p></article>
+          <article class="card"><h3>User context · target</h3><p>Separate PostgreSQL serving schemas for profiles, explicitly saved queues, and opt-in conversation/memory data; never include them in the catalog loader or model SQL allowlist.</p></article>
+          <article class="card"><h3>Models</h3><p>Demo: Cloudflare Worker for generation; Ollama is configured for embeddings only. Local generation or hybrid cloud/local serving is possible but not currently wired.</p></article>
+        </div>
+        <p>The DDL and loader are in <a href="../../load_postgres.py">load_postgres.py</a>. The existing PoC contains the eight measured Parquet datasets. The PostgreSQL loader validates column order and streams in batches up to 10,000 rows.</p>
+        <h3>PostgreSQL index experiment mapping</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Query / AP</th><th>Recommended index / choice</th><th>Reason</th></tr></thead>
+          <tbody>
+            <tr><td>Q1 / AP1 point lookup</td><td><code>tracks(album_id, track_name)</code></td><td>Equality composite; supports album lookup and narrows to track.</td></tr>
+            <tr><td>Q2 / AP3 point lookup</td><td><code>album(album_name, release_date)</code></td><td>Exact title/date.</td></tr>
+            <tr><td>Q3 / AP1 range</td><td><code>tracks(genre_id, popularity)</code></td><td>Equality then range/order.</td></tr>
+            <tr><td>Q4 / AP3 range</td><td><code>album(genre_id, release_date)</code></td><td>Genre equality then release period; score filter not selective enough.</td></tr>
+            <tr><td>Q7</td><td><code>artists(artist_name, artist_country)</code></td><td>Exact artist lookup.</td></tr>
+            <tr><td>Q8</td><td><code>album(release_date)</code></td><td>Date-only range and ordering.</td></tr>
+            <tr><td>Q5/Q6 / AP4</td><td>No new index</td><td>Full-table aggregates; scans/hash joins expected to be cheaper.</td></tr>
+          </tbody>
+        </table></div>
+        <p><a href="../Indexing_Strategy.pdf">Indexing strategy PDF</a> recommends six indexes. <code>sql/indexed.sql</code> additionally creates <code>album_scores(metacritic_critic_score)</code>, an extra experiment not in that six-index recommendation. The report discusses index write/storage costs, especially track popularity updates.</p>
+        <p class="warning">The performance-assessment PDF currently parses as a zero-page/truncated file. SQL scripts contain index-disabled/indexed <code>EXPLAIN ANALYZE</code> queries, but this blueprint does not fabricate timings. Re-run on the target PostgreSQL instance and record plans, medians/p95, data version, warm/cold cache, and environment. PostgreSQL indexes do not index DuckDB's Parquet views.</p>
+        <p>Consistency is manual/eventual: Parquet is authoritative; PostgreSQL may lag. DuckDB reads the snapshot at startup. There is no atomic multi-store update or HA claim. The local-only model option would require a generation-capable model, adequate hardware/throughput, runtime lifecycle and update management, and validation of structured output/tool selection; its performance and availability are not established.</p>
+      </section>
+
+      <section id="s7">
+        <h2>7. Integration and data pipelines</h2>
+        <div class="diagram">
+          <p class="diagram-label">Batch pipeline · active catalog path emphasized</p>
+          <div class="flow">
+            <div class="node"><b>Kaggle CSV</b><small>Manual download / local source</small></div><span class="arrow">→</span>
+            <div class="node"><b>transform_erd.py</b><small>Normalize, match, dedupe, assert</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>Parquet snapshot</b><small>Canonical eight-table layer</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>DuckDB views</b><small>Primary AI query path</small></div>
+          </div>
+          <div class="flow" style="margin-top:.6rem">
+            <div class="node secondary"><b>Parquet snapshot</b><small>Optional loader, batches ≤10k</small></div><span class="arrow">→</span>
+            <div class="node secondary"><b>PostgreSQL</b><small>Backup / bounded fallback</small></div>
+            <span class="arrow"> · · · optional · · · </span><div class="node"><b>MusicBrainz DB</b><small>Operator supplied → optional recording Parquet</small></div>
+          </div>
+        </div>
+        <p>Catalog pipeline is batch ETL and manual/on-demand. No Kafka consumer, CDC, schedule, or vector embedding builder is wired to it. Kafka/Avro and the profile flow below are proposals, not implemented components. The separate streaming-habits CSV is not currently loaded, but is a candidate profile seed for the demo.</p>
+        <div class="diagram">
+          <p class="diagram-label">Proposed demo profile path · static seed, no Kafka required</p>
+          <div class="flow">
+            <div class="node"><b>Streaming-habits CSV</b><small>4,000 sample profiles; one top artist/genre</small></div><span class="arrow">→</span>
+            <div class="node"><b>Validate identity + crosswalk</b><small>Unique artist match; curated, versioned genre aliases</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>DuckDB seed view or profile table</b><small>Lookup by verified demo identity</small></div><span class="arrow">→</span>
+            <div class="node"><b>Catalog join</b><small>artist → track_artists → tracks; genre → tracks</small></div>
+          </div>
+        </div>
+        <p>DuckDB can join loaded CSV/Parquet relations with catalog Parquet views; the relation need not be in one file or database. For read-only demo profiles, a DuckDB-loaded view is simplest. For editable persistent profiles, add PostgreSQL serving tables and let the API fetch only the authenticated user's fields. Keep profile tables outside the model-generated fallback allowlist.</p>
+        <p>For this 4,000-row static seed, DuckDB does not need a separate index; filtering the profile relation is enough. If profiles become persistent PostgreSQL rows, key them to the authenticated identity and use a primary key for fast lookup. The real join issue is identity quality: the 14 artist labels map uniquely after normalization, but genre labels collide across catalog IDs and some do not directly match track genres. Use a curated, versioned <code>profile_genre_alias(source_label, genre_id, mapping_version)</code> crosswalk; map to one or more deliberate genre IDs, then join through <code>tracks.genre_id</code> and/or <code>artist_genres</code> → <code>track_artists</code> → <code>tracks</code>. A top-artist preference joins through <code>track_artists</code> directly. Do not treat a CSV label as a foreign key.</p>
+        <div class="diagram">
+          <p class="diagram-label">Target user profile and event flow · not implemented</p>
+          <div class="flow">
+            <div class="node"><b>Authenticated API</b><small>Resolve trusted auth_subject; owner-scope every operation</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>PostgreSQL user_data</b><small>Profile, reviewed summary, playlists, saved queues + outbox</small></div><span class="arrow">→</span>
+            <div class="node"><b>Avro publisher + registry</b><small>Publish after commit; Kafka key = user_id</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>Kafka user-events</b><small>At-least-once; order per user partition</small></div>
+          </div>
+          <div class="flow" style="margin-top:.6rem">
+            <div class="node"><b>Idempotent consumers</b><small>Deduplicate event_id; retry/backoff; restricted DLQ</small></div><span class="arrow">→</span>
+            <div class="node secondary"><b>HDFS Avro archive</b><small>Bounded retention; deletion propagation</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>Compacted Parquet</b><small>Validated, event-date partitioned</small></div><span class="arrow">→</span>
+            <div class="node"><b>DuckDB analytics</b><small>Derived projections only; PostgreSQL remains profile authority</small></div>
+          </div>
+        </div>
+        <p>At login, read current state directly from PostgreSQL; do not replay Kafka. A state mutation and its outbox row are one transaction. The publisher can retry after broker errors and may deliver duplicates, so consumers deduplicate by <code>event_id</code> and commit offsets only after sink success. Never allow analytics consumers to overwrite explicit profile choices. Proposed assumptions: 7-day Kafka replay, p95 consumer lag under 5 seconds, publisher poll at least once/second, archive flush within 15 minutes, and raw archive maximum 12 months. Validate these against measured volume, availability, privacy and legal requirements before deployment.</p>
+        <div class="diagram">
+          <p class="diagram-label">Saved-queue path · active working queue is transient; persistence follows explicit Save</p>
+          <div class="flow">
+            <div class="node"><b>Session / request context</b><small>Imported playlist + stated/confirmed profile + catalog results; no presumed live playback feed</small></div><span class="arrow">→</span>
+            <div class="node"><b>Listener chooses Save</b><small>Require saved_queue_persistence consent</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>PostgreSQL saved_queue + tracks</b><small>Ordered items, stable catalog IDs, build and minimal reason evidence</small></div><span class="arrow">→</span>
+            <div class="node secondary"><b>Outbox → Kafka</b><small>Versioned save/delete metadata only; PostgreSQL remains authoritative</small></div>
+          </div>
+        </div>
+        <div class="diagram">
+          <p class="diagram-label">Target conversation aging and memory retrieval · not implemented</p>
+          <div class="flow">
+            <div class="node"><b>Authenticated conversation API</b><small>Resolve trusted user; fetch only recent messages and own memories</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>PostgreSQL conversation_data</b><small>Ordered short-lived message rows; owner/expiry filters</small></div><span class="arrow">→</span>
+            <div class="node"><b>Model context selection</b><small>Bound recent window + small set of relevant memories</small></div>
+          </div>
+          <div class="flow" style="margin-top:.6rem">
+            <div class="node"><b>Aging / falloff worker</b><small>Cold transcript reaches policy threshold</small></div><span class="arrow">→</span>
+            <div class="node"><b>Consolidate useful topic</b><small>Merge safe summary; embed/version; discard if no lasting value</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>pgvector topic memory</b><small>Decay by recency, confidence, and importance; hard expiry</small></div><span class="arrow">→</span>
+            <div class="node secondary"><b>Delete source transcript</b><small>Only after successful save; hard TTL and user deletion also purge both layers</small></div>
+          </div>
+        </div>
+        <p>Full logs have a short fixed retention; useful topics may remain longer but also have a hard maximum lifetime. At a configurable age/context-utility threshold, summarize only useful, non-sensitive topics; save the memory and minimal source-conversation IDs before purging messages. Retrieval ranks by semantic similarity adjusted by recency, confidence, and importance; only actually included memories update their last-retrieved time. Retrieval falloff is not deletion, and usage does not extend absolute expiry. Exact retention/decay thresholds are TBD. A deletion request removes source logs and derived memories/embeddings by default. No raw messages, summaries, or vectors go to Kafka/HDFS by default.</p>
+        <p>Use PostgreSQL for owner-scoped message retrieval and <code>pgvector</code> for compact memory summaries, not as an Avro blob store. JSONB is optional for auxiliary metadata only. Messages and memories remain in a separate serving schema/database from rebuildable catalog tables. A cloud summarization/generation call sends selected text outside the server, so apply the same minimization and provider-retention review as other model calls.</p>
+        <div class="diagram">
+          <p class="diagram-label">Target model telemetry flow · not implemented</p>
+          <div class="flow">
+            <div class="node"><b>API model-call instrumentation</b><small>Request/ invocation IDs; task, configured provider/model, observed timing, outcome, retries</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>OpenTelemetry Collector</b><small>Separate low-latency metrics/traces from durable analytics events</small></div><span class="arrow">→</span>
+            <div class="node"><b>Metrics + trace backend</b><small>Bounded labels; sampled traces; access/retention TBD</small></div>
+          </div>
+          <div class="flow" style="margin-top:.6rem">
+            <div class="node primary"><b>Avro model-telemetry topic</b><small>Separate ACL/retention/consumers from user-events</small></div><span class="arrow">→</span>
+            <div class="node secondary"><b>HDFS Avro</b><small>Restricted archive; retention TBD</small></div><span class="arrow">→</span>
+            <div class="node primary"><b>Parquet → DuckDB</b><small>Latency, outcome, retry and optional usage analysis</small></div>
+          </div>
+        </div>
+        <p>Capture provider-reported token counts only when available; Worker-side timing is end-to-end latency and does not expose provider internal compute. Telemetry may include invocation/trace ID, timestamp, provider/model/task, duration, outcome/error class, retry count, nullable usage and approved catalog-tool name/result count. Exclude prompts, completions, credentials, full catalog rows and user/account IDs. Do not use correlation IDs as metric labels. Instrumentation/export failure must not fail a successful recommendation; monitor telemetry delivery separately. Define sampling, retention, deletion, access and incident procedures before deployment.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Target</th><th>Freshness</th><th>Failure / limitation</th></tr></thead>
+          <tbody>
+            <tr><td>Parquet</td><td>Manual transform; SC4 24-hour target unmet</td><td>Missing files/assertion errors fail build; no scheduler/manifest.</td></tr>
+            <tr><td>DuckDB</td><td>Reads current files at startup</td><td>Missing required file fails startup; no hot reload/version pin.</td></tr>
+            <tr><td>PostgreSQL</td><td>Manual full reload from same Parquet build</td><td>Destructive drop/recreate loader; production needs staging/atomic swap.</td></tr>
+            <tr><td>MusicBrainz index</td><td>Manual export</td><td>Optional if file exists; record source version/date in future.</td></tr>
+            <tr><td>Playlist session</td><td>Fetched at import</td><td>Not persisted or automatically refreshed.</td></tr>
+            <tr><td>Persistent profile (target)</td><td>PostgreSQL current state; read target &lt;100 ms</td><td>No user schema/auth today; enforce owner scope in API.</td></tr>
+            <tr><td>Conversation transcript (target)</td><td>Fixed short retention; exact window TBD</td><td>Cold logs summarized or discarded; cleanup job required.</td></tr>
+            <tr><td>Topic memory (target)</td><td>Semantic/recency ranking; absolute maximum age TBD</td><td>Decay changes retrieval only; hard expiry and delete cascade remove text, vector, and source links.</td></tr>
+            <tr><td>Kafka user-events (target)</td><td>p95 consumer lag &lt;5 s; archive flush target ≤15 min</td><td>At-least-once, so consumers must deduplicate; deletion must reach archives.</td></tr>
+            <tr><td>Model telemetry (target)</td><td>Collector/export freshness target to be measured; no SLO set</td><td>No structured events today; telemetry loss must not block user response.</td></tr>
+            <tr><td>Model telemetry Parquet (target)</td><td>Compaction schedule/lag TBD</td><td>Retention and access policy must be approved before durable collection.</td></tr>
+            <tr><td>Vector index</td><td>Not present</td><td>Future work must handle re-embedding and deletions.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="s8">
+        <h2>8. Master data</h2>
+        <p>No master-data platform or golden-record workflow exists. Spotify track IDs are retained; artist, album, and genre integer IDs are generated per transform build and can shift when source membership changes. Source files remain upstream authority; the current Parquet build is local snapshot authority and PostgreSQL is derivative. Add a build ID and stable identity mapping before cross-build joins. The demo CSV's <code>listener_id</code> is sequential, not an authenticated account ID. Its 14 artist labels have unique normalized matches in this snapshot. Genre labels are ambiguous after normalization: several have multiple catalog IDs, while Afrobeats, Lo-fi, and R&amp;B do not directly identify an active track-genre row. Use a curated, versioned genre-alias crosswalk before retrieval.</p>
+      </section>
+      <section id="s9">
+        <h2>9. Metadata and lineage</h2>
+        <p>Field mappings live in <code>transform_erd.py</code>, the loader's <code>TABLE_PARQUET_MAP</code>, and DuckDB's table list. Column order is validated. A source checksum, source date, transform version, snapshot ID, persisted row-count/quality report, and field-level lineage artifact are not yet maintained. Add a manifest with each immutable snapshot.</p>
+        <p class="future">Target listener lineage connects each import batch and original row/provider ID to validation and catalog-match status, catalog snapshot, corrected-summary version, and recommendation reason. Retain only what is needed to explain a decision; owner-scope it and delete personal lineage with its source data.</p>
+      </section>
+      <section id="s10">
+        <h2>10. Data quality</h2>
+        <p>Current checks cover unique IDs, unique one-to-one tables, track-to-album completeness, and several reference-set relationships; PostgreSQL adds PK/FK enforcement, and loader validates expected columns/integer conversions. Risks include ambiguous title/artist matching, missing optional data, inconsistent aliases/tags, partial dates, and deterministic tie-break choices. There is no quarantine, reconciliation report, threshold policy, or ongoing quality dashboard.</p>
+        <p class="future">Target import quality requires 100% row accounting: accept each row or show a duplicate, unsupported, incomplete, or ambiguous reason. Only reviewed rows may ground recommendations. Queue acceptance tests must verify all hard exclusions and per-item supporting evidence. These are unverified target tests, not current quality results.</p>
+      </section>
+      <section id="s11">
+        <h2>11. Data governance</h2>
+        <p>README lists Kaggle sources under MIT, CC-BY-SA-4.0, GPL-2.0, and CC0 terms. The repository's code license does not override obligations on a merged derived catalog. Review source terms before redistribution. MusicBrainz data is operator-supplied and needs separate terms review. Listener profiles and conversations are not persisted today; the target requires recorded, purpose-specific consent before playlist import or personal-data persistence. Persistent conversation history is off by default and requires separate opt-in. A 24-hour deletion target is proposed for the demo, but the test must cover user tables, saved queues, summaries/embeddings, caches, projections, logs, and backup expiry. Since the current target outbox FK cascades, hard deletion must not erase an unpublished deletion event; define a minimal tombstone/acknowledgment path before implementation. Full logs should expire on a short fixed window or after successful consolidation; topic memories also need a hard maximum age. Retrieval falloff alone is not deletion. Model telemetry must exclude raw prompts/responses, credentials, and unnecessary identity; set separate access and retention controls for metrics, traces, and archived invocation events. A generated queue becomes persistent only when the listener explicitly saves it.</p>
+      </section>
+      <section id="s12">
+        <h2>12. Security and AI data contract</h2>
+        <p>Models have no direct database connection. The API exposes named DuckDB operations and validates optional PostgreSQL SQL. In the demo, prompts, approved profile details, and selected catalog rows are sent to the configured Cloudflare Worker. A local-only deployment could run the API and a generation-capable local model beside DuckDB/Parquet and PostgreSQL, keeping this context on the operator's server; this is not currently wired. A hybrid deployment can route selected calls to cloud models. For proposed persistent context, the API must resolve the authenticated user before loading profile, conversation, or memory rows; never let the model select arbitrary listener IDs or issue direct SQL against these stores. Consent failure must block import/persistence; unconfirmed inferred preferences stay request-scoped; only reviewed rows and confirmed preferences may ground recommendation reasons.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Surface</th><th>Fields / result shape</th><th>Access policy</th></tr></thead>
+          <tbody>
+            <tr><td><code>search_tracks</code></td><td>Track ID/title/duration/popularity/explicit; artist, genre, selected audio features</td><td>Parameterized filters; max 100 rows.</td></tr>
+            <tr><td><code>verify_tracks</code></td><td>Candidate title/artist matched to local catalog, optional MusicBrainz identity</td><td>≤50 candidates; multiple matches per candidate may be returned; fuzzy match may be imperfect.</td></tr>
+            <tr><td><code>search_albums</code></td><td>Album metadata, genre and selected critic/user scores</td><td>Bounded filters; max 100 rows.</td></tr>
+            <tr><td><code>compare_genres</code></td><td>Genre-level count/popularity/audio averages/explicit share</td><td>≤20 genres requested; max 100 rows.</td></tr>
+            <tr><td>PostgreSQL fallback</td><td>Eight allowlisted catalog tables and approved columns</td><td>Single SELECT; read-only role; 100 rows; 8-second timeout.</td></tr>
+            <tr><td>Worker prompt</td><td>User prompt, selected profile context, returned catalog rows</td><td>Minimize personal content; no secrets.</td></tr>
+            <tr><td>Recent conversation context (proposed)</td><td>Bounded recent messages belonging to the authenticated user</td><td>Off by default; separate opt-in; API owner/expiry filters; send only what is needed; no model DB access.</td></tr>
+            <tr><td>Topic-memory retrieval (proposed)</td><td>Small set of relevant, unexpired topic summaries; no raw transcript by default</td><td>Filter by user and expiry before vector search; recalled text is untrusted content, never system instructions.</td></tr>
+            <tr><td>Model telemetry (proposed)</td><td>Invocation/trace IDs, provider/model/task, duration, outcome, retries, optional usage and bounded tool metadata</td><td>Separate OpenTelemetry + Avro topic; no prompts/responses, credentials, user IDs, or full catalog rows.</td></tr>
+          </tbody>
+        </table></div>
+        <p class="warning">Conversation text or selected memories sent to cloud models leave the server; minimize context and review provider retention/training terms and data residency. Local models reduce third-party transfer but need suitable hardware and operations. Treat stored/recalled conversation content as untrusted: summarization must not promote prompt injection into system instructions. Use distinct least-privilege profile, conversation, and catalog roles; keep conversation tables outside the catalog reload process and generic SQL allowlist. Deletion must cover derived summaries, vectors, provenance, caches, projections, and backups; the 24-hour target needs an end-to-end test. Local default credentials are not production secrets management; Worker CORS permits <code>*</code>; no authentication/rate limit/audit policy is documented. Production requires TLS, secret injection, access controls, provider/privacy review, and retention policy. Playlist URL validation restricts YouTube hosts; apply SSRF review to future URL-fetching features.</p>
+      </section>
+
+      <section id="s13">
+        <h2>13. Analytics and AI data delivery</h2>
+        <p class="future"><strong>Proposed model, not implemented warehouse:</strong> catalog snapshot facts describe catalog properties; proposed user-event and model invocation facts remain separate. No plays, impressions, skips, ratings, feedback, model telemetry, conversation logs, or topic memories are stored today. Conversation text and embeddings stay in the user-serving store by default, not the analytics star.</p>
+        <div class="diagram">
+          <p class="diagram-label">Proposed star schema · descriptive dimensions connect to measurable facts · not implemented</p>
+          <div class="star">
+            <div class="node dim-a"><b>DimTrack</b><small>Track identity</small></div>
+            <div class="node dim-b"><b>DimAlbum</b><small>Album attributes</small></div>
+            <div class="node dim-c"><b>DimGenre</b><small>Genre label</small></div>
+            <div class="node dim-d"><b>DimArtist + bridge</b><small>Many-to-many credits</small></div>
+            <div class="node fact"><b>FactTrackCatalog</b><small>One row per unique track per snapshot build<br>duration, popularity, energy, valence, tempo…</small></div>
+            <div class="node dim-e"><b>DimSnapshotDate</b><small>ETL-assigned snapshot date</small></div>
+          </div>
+          <div class="star-relations">
+            <div class="star-relation"><strong>DimTrack 1 → many FactTrackCatalog</strong> · track key</div>
+            <div class="star-relation"><strong>DimAlbum 1 → many FactTrackCatalog</strong> · album key</div>
+            <div class="star-relation"><strong>DimGenre 1 → many FactTrackCatalog</strong> · genre key</div>
+            <div class="star-relation"><strong>DimSnapshotDate 1 → many FactTrackCatalog</strong> · snapshot key</div>
+            <div class="star-relation"><strong>DimAlbum + DimSnapshotDate 1 → many FactAlbumScoreSnapshot</strong></div>
+            <div class="star-relation"><strong>DimModel + DimRequestDate 1 → many FactModelInvocation</strong></div>
+            <div class="star-relation"><strong>DimArtist ↔ FactTrackCatalog</strong> · many-to-many through BridgeTrackArtist</div>
+          </div>
+          <p class="relations">FactTrackCatalog grain: one unique track per catalog snapshot; measures include duration/popularity/audio features. FactAlbumScoreSnapshot grain: one rated album per snapshot; measures are scores and counts. FactModelInvocation grain: one privacy-minimized model call; never include prompt/response content or user identity.</p>
+        </div>
+        <h3>Analytic proof-of-concept samples</h3>
+        <p>Queries run against the current Parquet files; they are equivalents of the proposed model's questions and do not imply star tables already exist.</p>
+        <div class="mock-dashboard">
+          <h3>Catalog overview · mock dashboard</h3>
+          <div class="grid">
+            <div class="card"><span class="metric">89,741</span><p>tracks</p></div>
+            <div class="card"><span class="metric">87,152</span><p>albums</p></div>
+            <div class="card"><span class="metric">39,528</span><p>artists</p></div>
+          </div>
+          <p>Top represented genres (AQ1 / AP4): acoustic 1,000 tracks; tango, afrobeat, cantopop 999 each; ambient 998. Average popularity/energy appear in the detailed Markdown output.</p>
+          <p>Highest critic scores (AQ2 / AP3): Fetch The Bolt Cutters (98), From Caplan To Belsize (98), SMiLE (97), The Greatest Generation (97), Van Lear Rose (97).</p>
+          <p>Top Last.fm listener-count proxies (AQ3 / AP8): Coldplay 5,381,567; Radiohead 4,732,528; Red Hot Chili Peppers 4,620,835; Rihanna 4,558,193; Eminem 4,518,868.</p>
+          <p><small>Static snapshot mockup—not a production dashboard or engagement report.</small></p>
+        </div>
+        <h3>AI delivery paths</h3>
+        <ul>
+          <li><strong>Recommendations:</strong> Worker plans DuckDB tool; API fetches candidates; prompt and selected rows go to Worker for generation.</li>
+          <li><strong>Album discovery / genre comparison:</strong> bounded DuckDB tool; PostgreSQL fallback as needed.</li>
+          <li><strong>Title verification:</strong> DuckDB catalog and optional MusicBrainz Parquet index; exact/fuzzy match.</li>
+          <li><strong>Demo-profile personalization (proposed):</strong> resolve a trusted demo identity, fetch only that profile, map artist/genre preferences, join to catalog; no Kafka/Avro needed for the static seed.</li>
+          <li><strong>Conversation continuity (proposed):</strong> PostgreSQL stores a short-lived, owner-scoped recent-message window; aged/cold logs are distilled into expiring pgvector topic memories, then the source transcript is purged after successful consolidation. Retrieval combines semantic similarity with recency/confidence/importance and a hard maximum age.</li>
+          <li><strong>Model reliability/cost/latency analytics (proposed):</strong> OpenTelemetry operational metrics/traces plus sanitized Avro <code>model-telemetry</code> → HDFS → compacted Parquet → DuckDB; provider token usage is nullable when unavailable.</li>
+          <li><strong>Catalog semantic retrieval and listener behavior analytics:</strong> not implemented; distinct from the proposed pgvector topic-memory retrieval and require separate data/evaluation/governance contracts.</li>
+        </ul>
+        <p>Detailed SQL and exact sample rows are in the <a href="./architecture.md#demonstration-analytics-against-current-parquet-proof-of-concept">Markdown blueprint</a>.</p>
+      </section>
+
+      <section id="s14">
+        <h2>14. Target state and scalability</h2>
+        <p>For current static size, Parquet + DuckDB is intentionally lightweight. As data grows, add immutable versioned directories, build manifests, atomic publication, quality summaries, and AP-labeled DuckDB benchmarks before adding indexes/partitioning. Keep PostgreSQL rebuildable while it remains useful. Reassess managed storage if concurrency, update frequency, or availability requirements change.</p>
+        <p>The target listener flow is consent-led: every imported row has a reviewable outcome, recommendations explain their supporting evidence and respect hard exclusions, and chat-inferred preferences remain suggestions until confirmed. The active queue remains transient until the listener explicitly saves it to PostgreSQL; Kafka carries only lifecycle events. Persistent conversation history is off by default and requires separate opt-in. A 24-hour deletion target is not verified; event-projection deletion needs a minimal tombstone/acknowledgment path that is not lost to outbox cascade.</p>
+        <p>Proposed pgvector is only for topic-memory retrieval; it is not a catalog vector index. Durable profiles, Kafka/Avro user events, short-lived conversation storage, expiring topic memories, and model telemetry are specified targets, not current components. Select embedding dimensions and retention/decay thresholds before implementation, and test owner/expiry filters. Interaction analytics require consented event capture; the separate streaming-habits CSV is not a replacement for application events. Cloud serving has provider/network/cost/privacy constraints; local serving can limit external data transfer but requires capacity and operational support.</p>
+      </section>
+      <section id="s15">
+        <h2>15. Roadmap, risks, and accepted tradeoffs</h2>
+        <ol>
+          <li>Version snapshots; add source checksums, build manifest, and transformation metrics.</li>
+          <li>Stage/validate new Parquet and publish atomically; replace destructive PostgreSQL reload with safe swap.</li>
+          <li>Measure AP1–AP5 latency and recommendation match quality; add privacy-minimized model-call telemetry and freshness monitoring.</li>
+          <li>Harden deployment: production secrets, authentication, rate limiting, provider review, and retention controls.</li>
+          <li>Resolve consent purposes, target import method, chat opt-in/retention, and deletion semantics/tombstone acknowledgment; generated queues are explicitly saved by listener action.</li>
+          <li>Build consent gates, reviewed row outcomes, owner-scoped profile and exclusions; verify row accounting and 24-hour deletion end to end.</li>
+          <li>Add explainable queue reasons, hard-exclusion tests, listener confirmation before inferred preferences are saved, and measure the 100-track / &lt;5 s / ≥95% target.</li>
+          <li>Add Kafka/Avro, conversation/memory, telemetry, and analytics only after retention, provider-data, and access policies are approved; they remain unimplemented drafts.</li>
+        </ol>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Risk</th><th>Effect</th><th>Mitigation</th></tr></thead>
+          <tbody>
+            <tr><td>Entity matching and build-local IDs</td><td>Incorrect merges or cross-build joins</td><td>Stable mappings, build identity, ambiguity and match-quality tests.</td></tr>
+            <tr><td>Manual refresh and independent copies</td><td>Stale or inconsistent DuckDB/PostgreSQL results; SC4 unmet</td><td>Versioned snapshots, freshness watermark, automated refresh and atomic swap.</td></tr>
+            <tr><td>Playlist import and recommendation evidence</td><td>Silent row loss, mismatched tracks, unexplained or exclusion-violating queue items</td><td>100% row accounting, visible ambiguity, reviewed-only evidence, provenance and hard-exclusion tests.</td></tr>
+            <tr><td>Deletion propagation</td><td>Listener data remains in asynchronous projections, archives, caches, or pending events</td><td>Durable minimal tombstone, consumer acknowledgment, bounded retention, and end-to-end 24-hour test.</td></tr>
+            <tr><td>Provider/privacy and local security gaps</td><td>Prompt/context exposure or unauthorized use</td><td>Minimize data, secure deployment, access/audit controls, provider and retention review.</td></tr>
+          </tbody>
+        </table></div>
+        <p><strong>Accepted today:</strong> manual/eventual consistency, static catalog, no durable personalization, external model dependency, no vector retrieval despite configured embedding model, and no HA claim.</p>
+      </section>
+
+      <section>
+        <h2>Implementation and evidence links</h2>
+        <ul>
+          <li><a href="./architecture.md">Detailed Markdown blueprint</a></li>
+          <li><a href="./final_project_instructions.txt">Final project instructions</a> · <a href="../ERD.pdf">Initial ERD</a></li>
+          <li><a href="../../backend/duckdb_service.py">DuckDB service</a> · <a href="../../backend/main.py">AI API</a></li>
+          <li><a href="../../transform_erd.py">CSV-to-Parquet transformation</a> · <a href="../../load_postgres.py">PostgreSQL backup loader</a></li>
+          <li><a href="../../docker-compose.yml">Compose topology</a> · <a href="../../sql/benchmark.sql">Benchmark SQL</a></li>
+          <li><a href="../Indexing_Strategy.pdf">Indexing strategy</a> · <a href="../Query_Performance_Assessment_Final.pdf">Query performance assessment (currently unreadable/truncated)</a></li>
+          <li><a href="../../README.md">Setup, user behavior, sources, and licensing</a></li>
+        </ul>
+        <p>All present-tense claims describe the repository evidence snapshot. Anything marked proposed, future, unmeasured, or not met should remain labeled that way until implementation or measurement changes.</p>
+      </section>
+    </main>
+  </div>
+  <footer>Living document · update this blueprint alongside material architecture changes and preserve an evidence date for measured counts or performance.</footer>
+</body>
+</html>

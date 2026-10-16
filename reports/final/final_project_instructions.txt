@@ -1,0 +1,419 @@
+Overview
+Your final project is a data architecture blueprint for one AI capability, built in eight steps from business processes to a working proof of concept.  The blueprint follows the 15-section outline; this guide sets the order to work in, the deliverables for each step.
+
+Sections 3, 4, 5, 6, 7, and 13 are the core of the project and hold its diagrams, models, and hands-on work.  The remaining sections are completed briefly in Step 8.
+
+The strongest blueprints read as one connected argument.  Each step uses artifacts from the step before it, and your write-up should cite them explicitly.
+
+Access patterns are the hinge: number them in Step 3 and cite them by ID when you choose models, tune indexes, design pipelines, and write analytic queries.
+
+Note: The major deliverable is a data architecture blueprint (document).  A brief (< 10 slides) presentation and/or video are optional.  I would like to select a few excellent projects for presentation.
+
+Milestones
+The project is submitted in four checkpoints and a final blueprint, so modeling problems are caught before you build on them.  Each checkpoint is revised and carried forward into the final submission.
+
+Step 1: Scope Statement (Draft of Section 1)
+Write a one-page problem and scope statement first; it becomes your executive summary in Step 8.  Its job now is to keep every later design decision tied to a single business problem.
+
+What to Write
+
+The business problem and the AI capability the architecture supports (e.g., a support agent that answers order questions, a demand forecast, a contract-review assistant).
+What is in scope and what is explicitly out of scope.
+The primary users of the AI system and the stakeholders who would sponsor and read this document.
+Two to four success criteria the architecture must meet (e.g., answers reflect order status no more than 15 minutes old).
+Deliverables
+
+Problem and scope statement (1 page maximum).
+Tips
+
+Pick a problem narrow enough to model in detail.  One business process done well beats an entire enterprise sketched loosely.
+Success criteria with numbers give you something to test in Steps 5 through 7.
+Step 2: Business Processes and System Context (Section 3)
+Model the business processes the system supports, and identify the data each step creates, reads, or updates.  Most class projects are new designs, so treat Section 3 as the proposed process and system context; if you are working with an existing organization, also describe the current systems.
+
+What to Write
+
+The two or three business processes in scope, and where the AI system participates in each.
+For each process step, the data it creates, reads, updates, or deletes.
+The source systems involved (existing or assumed), and any known data problems such as duplicates, inconsistent codes, or missing history.
+Deliverables
+
+A BPMN diagram for each in-scope process, using pools or lanes for the people, systems, and AI agent involved.
+A process-to-data table: process step, data object, operation (create, read, update, or delete).
+A short system context description listing the source systems and what each holds.
+Tips
+
+Keep BPMN at the level of business activities, not screen clicks.  Ten to fifteen activities per process is usually enough.
+Show the AI agent as its own lane.  It makes clear which data it reads and which actions it can trigger.
+Every data object in your process-to-data table should become an entity or attribute in Step 3.
+Step 3: Data Domains and Conceptual Model (Section 4)
+Identify the business data domains and build a technology-independent conceptual model, then estimate how the data will be used.  The access patterns you write here drive your model choices in Step 4 and your benchmarks in Step 5.
+
+What to write
+
+The core data domains (e.g., customer, product, order, support case, policy document) and which are authoritative in this system versus sourced elsewhere.
+Major entities and relationships, with no reference to tables, collections, or products.
+Data sources for each domain and estimated volumes: current row or document counts, growth per month, and average record or document size.
+Primary access patterns: the most important reads and writes, how often they run, and how the AI system will query each domain (lookup by key, filter, aggregate, or semantic search).
+Deliverables
+
+Conceptual ERD in crow's foot notation: entities, relationships, and cardinality. Include only identifying attributes, or none.
+Data source inventory: domain, source system, estimated volume, growth rate.
+Access pattern table: pattern ID (AP1, AP2, ...), description, read or write, frequency, latency target, consumer (person, application, or AI agent).
+Tips
+
+Unstructured content such as policy documents or support transcripts still belongs on the conceptual ERD as an entity.  How it is stored is decided later.
+Number your access patterns. You will cite them by ID in Steps 4 through 7.
+Volume estimates can be assumptions, but state them and show the arithmetic.
+Step 4: Logical design (Section 5)
+Choose a data model for each domain and justify it using your access patterns, then refine each part of the design to full logical detail.  This is the central design decision of the project.
+
+What to Write
+
+A model choice for each domain (relational, document, key-value, or vector), justified by the access patterns from Step 3.  Cite pattern IDs.
+For relational parts: normalization level, any deliberate denormalization and why, and the business rules enforced through keys, constraints, and checks.
+For document parts: what is embedded versus referenced, and what schema validation is enforced.
+For vector parts: the unit of retrieval (chunking strategy), the metadata stored with each vector, and how each chunk links back to its source entity.
+How each entity is identified across stores, and which store is authoritative when copies diverge.
+Deliverables
+
+Model assignment table: domain, chosen model, access patterns supporting the choice, alternatives considered.
+Logical ERD for the relational parts: all attributes, primary and foreign keys, cardinality and optionality, normalized to at least 3NF unless you justify otherwise.
+Data dictionary: entity, attribute, data type (logical, not product-specific), nullability, key role, description, business rule reference.
+Business rules list: rule ID, statement, and how it is enforced (schema constraint, validation, or application code).
+For document models: a JSON Schema or annotated sample document for each collection.
+For vector models: a chunk record specification listing fields, metadata, and the key linking back to the source entity.
+Tips
+
+Answer only the prompts that apply to the models you chose, but every project answers the model choice and cross-store identity questions.
+A design that uses one relational database with vector support can be a strong answer.  Justify it the same way.
+If a business rule ends up in application code, say why the schema cannot enforce it.
+Step 5: Physical Design and Proof of Concept (Section 6)
+Select specific platforms, implement the core of your logical design, and show with measurements that your physical choices support the access patterns.  This is the hands-on part of the project.
+
+What to Write
+
+The platform for each logical model (e.g., PostgreSQL with pgvector, MongoDB, a dedicated vector database), why you chose it, and where consolidating onto fewer platforms was or was not worth it.
+The CAP and consistency tradeoffs your design accepts, and why they are acceptable for this use case.
+Warehouse, lake, lakehouse, or hybrid for analytical storage, checked against the volumes and access patterns from Steps 3 and 4.
+Indexing, partitioning, and storage decisions, each tied to one or more access patterns.
+For vector stores: the embedding model, dimensionality, distance metric, and index type (e.g., HNSW, IVF), with reasons.
+Deliverables
+
+Platform selection table: logical model, platform, reason, alternatives rejected.
+DDL scripts (or collection and index definitions) for the implemented portion of the design.
+A sample dataset loaded into the proof of concept, with its size stated (e.g., 100,000 orders, 2,000 document chunks).
+Benchmark queries: one per key access pattern, labeled with the pattern ID.
+Before-and-after evidence for each tuning decision, such as EXPLAIN ANALYZE output or measured execution times with and without the index or partitioning.
+Proof of Concept Scope
+
+Required: the relational core, its constraints, and at least three tuned access patterns.
+Required if your design uses one: a document or vector store with a working query that links results back to source entities.
+Optional: the full design, load testing at projected volume.
+Tips
+
+Benchmark only queries that implement your access patterns.  Tuning arbitrary queries does not show anything about your design.
+Report what did not improve as well as what did. An index that did not help is a useful finding.
+Step 6: Integration and Data Pipelines (Section 7)
+Design how data moves from its sources into each store, including the path that produces embeddings for the AI system.  Implementation is optional; the design is required.
+
+What to Write
+
+The path from each source to each target store, and whether it is ETL or ELT.
+The orchestration pattern (scheduled batch, event-driven, change data capture) and how failures and retries are handled.
+The freshness requirement for each target, taken from your success criteria and access patterns, and whether the pipeline design meets it.
+For vector stores: when documents are re-chunked and re-embedded, and how deleted or changed source records are removed from the index.
+Deliverables
+
+Pipeline architecture diagram: sources, transformation steps, targets, and the orchestrator.
+Source-to-target mapping: source system and field, transformation rule, target store and field.
+Freshness table: target, required freshness, designed freshness.
+Optional: a working pipeline (SQL scripts, Python, dbt, Airflow, or similar) loading part of the proof-of-concept data.
+Tips
+
+The source-to-target mapping is where vague designs become concrete.  Fill it in for every field on your logical ERD that comes from outside the system.
+Stale embeddings are a common silent failure in AI systems.  Explain how yours stay in sync.
+Step 7: Analytics and AI Data Delivery (Section 13)
+Design the analytical side of the architecture and show how people and the AI system consume the data.  Your dimensional model belongs here, not in Section 5.
+
+What to Write
+
+The reporting and analytics questions the business needs answered, tied to your success criteria.
+The analytical database design: fact tables, their grain, and dimensions.  Explain how it is loaded from the operational stores designed in Steps 4 and 5.
+How the AI system consumes data at inference time: static context, live retrieval, or both, and which stores it reads.
+If an AI agent queries data live (for example, through MCP), the data contract that governs what it can request and receive: which tables or views, which fields, and what row-level limits apply.
+AI use cases built on the analyses, such as natural-language questions over a semantic layer, features for a predictive model, or retrieved summaries passed to an assistant.
+Deliverables
+
+Star schema diagram with the grain of each fact table stated.
+Three to five analytic queries answering the stated business questions, with sample output from your proof of concept.
+A dashboard mockup or working prototype showing those results.
+An AI data delivery description: each AI use case, the data it reads, and how (retrieval, view, API, or agent tool).
+If an agent has live access: a data contract listing the exposed objects, fields, and access rules.
+Tips
+
+State the grain in one sentence (e.g., one row per order line per day). Most star schema errors come from an unclear grain.
+An agent should usually read curated views rather than raw tables. Say which views it gets and why.
+Step 8: Supporting Sections and Executive Summary
+Complete the remaining sections briefly, then rewrite Section 1 as the executive summary.  The supporting sections show you understand the full architecture; they do not need the depth of Steps 3 through 7.
+
+Supporting Sections (Half a Page to One Page Each)
+
+Section 2, Architecture Principles: three to five principles, and where your design applied them.
+Sections 8 to 12 (master data, metadata, quality, governance, security): answer each section's prompts briefly for your design.  Give particular attention to Section 12's question of what AI agents may access.
+Sections 14 and 15 (target state, roadmap, risks): describe how the design scales, the three biggest risks, and the tradeoffs you knowingly accepted.
+Executive Summary (Section 1)
+
+Replace your Step 1 scope statement with a one-page summary: the problem, the architecture in a few sentences, the key design decisions, and whether the design meets the success criteria.
+Write it for a reader who will read nothing else.
+Deliverables
+
+Brief Sections 2, 8 to 12, 14, and 15.
+Executive summary (1 page maximum).
+Deliverables summary
+Use this table as your checklist.  "Required if used" applies when your design includes that data model or an agent with live data access.
+
+Blueprint Section
+
+Deliverable
+
+Requirement
+
+Milestone
+
+1
+
+Problem and scope statement
+
+Required
+
+M1
+
+3
+
+BPMN diagram per process
+
+Required
+
+M1
+
+3
+
+Process-to-data table
+
+Required
+
+M1
+
+3
+
+System context description
+
+Required
+
+M1
+
+4
+
+Conceptual ERD
+
+Required
+
+M2
+
+4
+
+Data source inventory with volumes
+
+Required
+
+M2
+
+4
+
+Access pattern table
+
+Required
+
+M2
+
+5
+
+Model assignment table
+
+Required
+
+M2
+
+5
+
+Logical ERD
+
+Required
+
+M2
+
+5
+
+Data dictionary
+
+Required
+
+M2
+
+5
+
+Business rules list
+
+Required
+
+M2
+
+5
+
+JSON Schema or annotated sample document
+
+Required if used
+
+M2
+
+5
+
+Vector chunk record specification
+
+Required if used
+
+M2
+
+6
+
+Platform selection table
+
+Required
+
+M3
+
+6
+
+DDL scripts and index definitions
+
+Required
+
+M3
+
+6
+
+Loaded sample dataset
+
+Required
+
+M3
+
+6
+
+Benchmark queries and tuning evidence
+
+Required
+
+M3
+
+7
+
+Pipeline architecture diagram
+
+Required
+
+M4
+
+7
+
+Source-to-target mapping
+
+Required
+
+M4
+
+7
+
+Freshness table
+
+Required
+
+M4
+
+7
+
+Working pipeline implementation
+
+Optional
+
+M4
+
+13
+
+Star schema with stated grain
+
+Required
+
+M4
+
+13
+
+Analytic queries with sample output
+
+Required
+
+M4
+
+13
+
+Dashboard mockup or prototype
+
+Required
+
+M4
+
+13
+
+AI data delivery description
+
+Required
+
+M4
+
+13
+
+Agent data contract
+
+Required if used
+
+M4
+
+2, 8–12, 14, 15
+
+Brief supporting sections
+
+Required
+
+Final
+
+1
+
+Executive summary
+
+Required
+
+Final
+
+Final Submission Checklist
+Check each item before submitting the final blueprint.
+
+Every data object in the process-to-data table appears in the conceptual ERD.
+Every domain has a model choice justified by cited access pattern IDs.
+The logical ERD, data dictionary, and DDL use the same entity and attribute names.
+Every index and partitioning decision cites an access pattern and has before-and-after evidence.
+Every externally sourced field on the logical ERD appears in the source-to-target mapping.
+Each star schema states its grain, and each analytic query runs against the proof of concept.
+Each AI use case names the stores or views it reads and how it reads them.
+The executive summary states whether each success criterion from Step 1 is met.
+DDL scripts, queries, and any pipeline code are included in an appendix or linked repository.
