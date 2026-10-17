@@ -19,6 +19,7 @@ from main import (
     extract_youtube_playlist_id,
     fetch_catalog_for_request,
     generate_catalog_query,
+    load_demo_profile,
     load_youtube_playlist,
     verify_discovered_tracks,
     validate_read_query,
@@ -26,6 +27,47 @@ from main import (
 
 
 class ReadOnlyQueryValidationTests(unittest.TestCase):
+    def test_demo_profile_endpoint_rejects_non_positive_ids(self) -> None:
+        with self.assertRaises(HTTPException) as error:
+            load_demo_profile(0)
+
+        self.assertEqual(error.exception.status_code, 422)
+
+    def test_demo_profile_endpoint_proxies_profile_and_catalog_matches(self) -> None:
+        payload = {
+            "profile": {"listener_id": 1, "top_artist": "Alice"},
+            "artist_mapping_status": "matched",
+            "genre_mapping_status": "matched",
+            "matched_genre": {"genre_id": 1, "genre_name": "Jazz"},
+            "tracks": [{"catalog_track_id": "t1", "title": "Blue Train"}],
+        }
+        response = httpx.Response(
+            200,
+            json=payload,
+            request=httpx.Request("GET", "http://duckdb/demo-profiles/1"),
+        )
+        with patch("main.httpx.get", return_value=response) as duckdb_request:
+            result = load_demo_profile(1)
+
+        self.assertEqual(result, payload)
+        self.assertEqual(
+            duckdb_request.call_args.args[0],
+            "http://duckdb:8001/demo-profiles/1",
+        )
+
+    def test_demo_profile_endpoint_preserves_unknown_id_response(self) -> None:
+        response = httpx.Response(
+            404,
+            json={"detail": "Demo listener 5000 was not found."},
+            request=httpx.Request("GET", "http://duckdb/demo-profiles/5000"),
+        )
+        with patch("main.httpx.get", return_value=response):
+            with self.assertRaises(HTTPException) as error:
+                load_demo_profile(5000)
+
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(error.exception.detail, "Demo listener 5000 was not found.")
+
     def test_cloudflare_models_are_assigned_to_the_expected_roles(self) -> None:
         self.assertEqual(MODEL, "llama")
         self.assertEqual(CHAT_MODEL, "glm")

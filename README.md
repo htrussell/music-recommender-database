@@ -84,11 +84,21 @@ and runs using the `music_reader` role.
 override the local-development default.
 
 Playlist and taste-profile review/save remain browser-session data. A listener
-profile is not written into the music database. Public YouTube playlist links
-are imported by the local backend using `yt-dlp`; no third-party API key is
-required in the frontend. The AI can match alternate title spellings and
-YouTube title variations against the read-only music catalog. Normalized JSON
-playlist files can also be imported.
+profile is not written into the music database. Chat-inferred preferences stay
+as suggestions until the listener confirms each one; only confirmed
+preferences can influence recommendations or be saved in the browser session.
+The demo can load one of the 4,000 sample profiles in
+`csv/music_streaming_habits_2026.csv` by listener ID. DuckDB reads that file as
+a separate, read-only profile view and adds up to 40 catalog tracks matched by
+top artist and curated top-genre aliases to the candidate pool. Only top artist,
+top genre, and top mood are sent to the model; other sample attributes are shown
+locally. These synthetic fixture IDs are not authenticated users or streaming
+event history. The selected ID is retained only when the listener saves the
+browser-session profile.
+Public YouTube playlist links are imported by the local backend using `yt-dlp`;
+no third-party API key is required in the frontend. The AI can match alternate
+title spellings and YouTube title variations against the read-only music
+catalog. Normalized JSON playlist files can also be imported.
 
 Before running it, install Python 3.10+, Docker Desktop with Compose v2, and
 configure Kaggle API credentials either as `KAGGLE_USERNAME` / `KAGGLE_KEY`

@@ -1,0 +1,107 @@
+Project MusicRecommenderCatalog {
+  database_type: 'PostgreSQL'
+  Note: 'Current catalog schema from load_postgres.py. Parquet carries the same columns but does not enforce these relational constraints.'
+}
+
+Table genre {
+  genre_id integer [pk, not null]
+  genre_name varchar(255)
+
+  Note: 'One normalized display label per snapshot ID.'
+}
+
+Table artists {
+  artist_id integer [pk, not null]
+  artist_name varchar(512)
+  artist_country text
+  artist_popularity double precision
+
+  Note: 'Catalog artist identity.'
+}
+
+Table album {
+  album_id integer [pk, not null]
+  genre_id integer
+  album_name varchar(1000)
+  album_format varchar(100)
+  release_date varchar(50)
+  label varchar(512)
+
+  Note: 'Catalog album identity and release attributes.'
+}
+
+Table album_scores {
+  album_id integer [pk, not null]
+  metacritic_critic_score double precision
+  metacritic_critic_count integer
+  metacritic_user_score double precision
+  metacritic_user_count integer
+  aoty_critic_score double precision
+  aoty_critic_count integer
+  aoty_user_score double precision
+  aoty_user_count integer
+
+  Note: 'Optional one-to-one review-score extension.'
+}
+
+Table tracks {
+  track_id varchar(50) [pk, not null]
+  album_id integer
+  genre_id integer
+  track_name varchar(1000)
+  popularity integer
+  duration_ms integer
+  explicit boolean
+
+  Note: 'One row per source track ID.'
+}
+
+Table track_feel {
+  track_id varchar(50) [pk, not null]
+  danceability double precision
+  energy double precision
+  key integer
+  loudness double precision
+  mode integer
+  speechiness double precision
+  acousticness double precision
+  instrumentalness double precision
+  liveness double precision
+  valence double precision
+  tempo double precision
+  time_signature integer
+
+  Note: 'Optional one-to-one audio-feature extension.'
+}
+
+Table track_artists {
+  track_id varchar(50) [not null]
+  artist_id integer [not null]
+
+  indexes {
+    (track_id, artist_id) [pk]
+  }
+
+  Note: 'Associative bridge between tracks and credited artists.'
+}
+
+Table artist_genres {
+  artist_id integer [not null]
+  genre_id integer [not null]
+
+  indexes {
+    (artist_id, genre_id) [pk]
+  }
+
+  Note: 'Associative bridge for artist genre tags.'
+}
+
+Ref: album.genre_id > genre.genre_id
+Ref: tracks.album_id > album.album_id
+Ref: tracks.genre_id > genre.genre_id
+Ref: album_scores.album_id - album.album_id
+Ref: track_feel.track_id - tracks.track_id
+Ref: track_artists.track_id > tracks.track_id
+Ref: track_artists.artist_id > artists.artist_id
+Ref: artist_genres.artist_id > artists.artist_id
+Ref: artist_genres.genre_id > genre.genre_id
