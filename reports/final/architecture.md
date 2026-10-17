@@ -96,17 +96,19 @@ current capabilities.
 | SC12 (target) | Persist no chat-inferred preference until the listener explicitly confirms it. | **Not implemented or verified:** no persistent preference-confirmation flow exists. |
 | SC13 (target) | Keep generated queues transient until the listener explicitly saves one; saved queues are owner-scoped and reusable by that listener. | **Not implemented:** current queues remain session context; no saved-queue schema or API exists. |
 
-The separate `csv/music_streaming_habits_2026.csv` is a possible demo-profile seed:
-it contains 4,000 rows with unique sequential `listener_id` values, a single
-`top_artist` and `top_genre` label, and aggregate listener attributes. It has no
-track IDs, per-play events, actual playlists, or login identity mapping. The 14
-distinct artist labels each have a unique normalized match to a catalog artist in
-this snapshot. Genre matching is not one-to-one: multiple catalog genre rows
-normalize to the same label, and several profile labels (such as `Afrobeats`,
-`Lo-fi`, and `R&B`) do not directly match the active track-genre vocabulary.
-Treat these rows as fixture/demo profiles, not authenticated production users or
-streaming-event telemetry; build and validate an explicit genre alias crosswalk
-before using those labels for retrieval.
+The separate `csv/music_streaming_habits_2026.csv` is loaded by the DuckDB
+service as a read-only demo-profile view. It contains 4,000 rows with unique
+sequential `listener_id` values, a single `top_artist` and `top_genre` label,
+and aggregate listener attributes. It has no track IDs, per-play events, actual
+playlists, or login identity mapping. The demo endpoint validates that profile
+IDs are unique, requires a unique normalized artist match, and uses a
+version-1 curated genre crosswalk to retrieve at most 40 matching catalog tracks.
+Unmatched or ambiguous artist/genre labels are reported rather than treated as
+foreign keys. Only top artist, top genre, and top mood are sent as soft model
+context; other fixture attributes are displayed locally. Treat these rows as
+synthetic demo profiles, not authenticated production users or streaming-event
+telemetry. The browser-selected ID is a fixture selector; production must bind
+profiles to a trusted authenticated principal.
 
 The file-level snapshot currently contains 89,741 unique tracks, 87,152 albums,
 39,528 artists, and 90,603 genre labels. The system demonstrates bounded access and
@@ -272,10 +274,10 @@ Target listener flow (proposed, not implemented):
 
 | Component / source | Holds or does | Status |
 |---|---|---|
-| Kaggle CSVs in `csv/` | Spotify track attributes, album ratings, artist metadata/tags, and a separate streaming-habits CSV. | Source files; not all are consumed by the current transformation. |
+| Kaggle CSVs in `csv/` | Spotify track attributes, album ratings, artist metadata/tags, and a separate streaming-habits CSV. | Catalog inputs are batch-transformed; streaming-habits CSV is read separately by DuckDB for demo profiles. |
 | `transform_erd.py` | Cleans, matches, deduplicates, normalizes, and writes eight Parquet tables. | Implemented batch transformation. |
 | `transformed/*.parquet` | Canonical current catalog snapshot. | Primary data artifact. |
-| DuckDB service | In-memory connection with views using `read_parquet`; parameterized search/verification tools. | Primary AI catalog query path. |
+| DuckDB service | In-memory connection with Parquet catalog views, parameterized search/verification tools, and a read-only streaming-habits profile view. | Primary AI catalog query path and static demo-profile lookup. |
 | PostgreSQL 15 | Relational copy of the same Parquet tables, loaded in batches. | Backup and read-only fallback. |
 | FastAPI AI service | Request routing, worker calls, catalog-tool planning, validation, playlist import, and PostgreSQL fallback. | Implemented. |
 | PostgreSQL user-serving schema (target) | Authenticated identity mapping, durable profile, normalized preferences, saved playlists and tracks, transactional outbox. | Proposed only; separate from catalog backup tables. |
@@ -287,7 +289,7 @@ Target listener flow (proposed, not implemented):
 | Local model runtime (deployment option) | Could host recommendation/chat/planning models beside the API and catalog. | Not currently wired for generation. Requires sufficient CPU/GPU memory and throughput, model lifecycle/updates, monitoring, and model capability checks; local deployment reduces third-party prompt transfer but does not itself provide authentication, privacy controls, or availability. |
 | Optional MusicBrainz export | A user-supplied MusicBrainz PostgreSQL database can be exported to a compact Parquet matching index. | Optional; not downloaded/imported by this repository. |
 | Kafka, ZooKeeper, Spark, HDFS, Jupyter | Compose services for experiments and optional paths. | Not connected to the primary catalog/recommendation data path. |
-| `music_streaming_habits_2026.csv` | 4,000 listener-like rows with `listener_id`, profile attributes, and top-artist/top-genre labels. | Present but unused by current transform, API, or database; candidate demo seed only. |
+| `music_streaming_habits_2026.csv` | 4,000 listener-like rows with `listener_id`, profile attributes, and top-artist/top-genre labels. | Read-only DuckDB demo seed; not catalog ETL, playback-event data, or authenticated user data. |
 
 ## 4. Data domains and conceptual model
 
@@ -377,7 +379,7 @@ primary target unless the row says PostgreSQL fallback.
 | AP6 | Rebuild canonical catalog from downloaded source CSVs. | Batch write | Manual/on-demand | No freshness SLO; runtime not measured | Maintainer |
 | AP7 | Load PostgreSQL relational backup from canonical Parquet. | Batch write | Manual/on-demand | No freshness SLO; bounded 10,000-row batches | Maintainer |
 | AP8 | Ad hoc genre/album/artist analysis against catalog entities. | Read/aggregate | Development/class project | Analyst-selected | Analyst / notebook |
-| AP9 (proposed) | Resolve a demo profile by verified listener identity; use its top artist and curated genre-alias mapping to retrieve catalog tracks. | Read | Each demo login/request | <100 ms profile read and <5 s end-to-end target; unmeasured | AI API / listener |
+| AP9 (demo implemented) | Resolve a selected static fixture ID; use its top artist and versioned genre-alias mapping to retrieve at most 40 catalog tracks. | Read | Explicit profile load | Latency unmeasured; browser ID is not an authenticated identity | AI API / listener |
 | AP10 (target) | Read/update the authenticated user's profile, saved preferences, and ordered playlists from the serving store. | Read/write | Login, profile edit, playlist save, recommendation request | <100 ms profile lookup target; <1 s profile write target; unmeasured | API / listener |
 | AP11 (target) | Publish profile changes, playlist lifecycle, recommendation impressions, and explicit track feedback as versioned user events; consume asynchronously for projections and analytics. | Append/read stream | On each eligible user action; expected rate TBD | Event-to-consumer p95 <5 s target; unmeasured | API producer / Kafka consumers |
 | AP12 (target) | Record privacy-minimized model-call metadata for operations and analytics; exclude prompt/response content and account identity. | Append/write and aggregate/read | Every model invocation; expected rate TBD | Collector/export freshness and overhead SLO TBD; unmeasured | API instrumentation / operations / analyst |
@@ -386,10 +388,12 @@ primary target unless the row says PostgreSQL fallback.
 | AP15 (target) | Validate and review every imported playlist row, then create a queue from reviewed inputs with reasons and hard exclusions. | Read/write | Per import and queue request | 100-track queue <5 s p95 target; at least 95% of test runs; unverified | Import / recommendation API / listener |
 | AP16 (target) | Save, list, reopen, rename, and delete a listener-selected queue with its ordered tracks and minimal reason evidence. | Read/write/delete | On explicit save and later queue management | <100 ms saved-queue read target; unmeasured | Listener API / listener |
 
-AP1–AP4 are implemented by DuckDB tool operations in `backend/duckdb_service.py`.
-AP5 is implemented in the FastAPI service and PostgreSQL role. AP6–AP7 have scripts
-but no scheduler. AP8 exists as SQL and notebook/report work, not a user-facing
-analytics warehouse. AP9 is not wired to login or recommendation flow.
+AP1–AP4 and the read-only demo-profile lookup in AP9 are implemented by DuckDB
+operations in `backend/duckdb_service.py`; the AI API exposes the profile lookup
+as a separate route outside model-generated SQL. AP5 is implemented in the FastAPI
+service and PostgreSQL role. AP6–AP7 have scripts but no scheduler. AP8 exists as
+SQL and notebook/report work, not a user-facing analytics warehouse. The demo
+profile does not authenticate a user or persist a server-side profile.
 AP10–AP16 are target patterns only; no user-profile/conversation schema, consent
 ledger, pgvector extension, Kafka producer/consumer, Avro schema registry, event
 archive, memory retrieval, queue-reason provenance pipeline, or structured model
@@ -405,7 +409,7 @@ telemetry pipeline is implemented.
 | Relational backup | PostgreSQL relational tables, PK/FK constraints | AP5, AP7 | Kept as recovery/fallback and to demonstrate relational constraints; not the primary AI query path. |
 | Listener prompt / taste / playlist | Browser-session JSON/context, transient API request | AP1, AP2, AP5 | No durable profile store is present. A relational profile/event model requires consent and lifecycle decisions first. |
 | Optional recording verification | Parquet title/artist index from separately supplied MusicBrainz PostgreSQL | AP2 | Optional exact-title companion, not the authoritative local catalog and not required for normal queries. |
-| Demo listener profile | Proposed profile table/view seeded from `music_streaming_habits_2026.csv` | AP9 | 4,000 unique sample IDs and summary preferences; no track IDs/history or current application integration. |
+| Demo listener profile | Read-only DuckDB view over `music_streaming_habits_2026.csv`; API resolves selected fixture ID and catalog matches | AP9 | 4,000 unique sample IDs and summary preferences; no track IDs/history/authentication. Browser-session selection only. |
 | Durable profile, reviewed taste summary, preferences, playlists, and explicitly saved queues (target) | PostgreSQL `user_data` schema | AP10, AP11, AP14–AP16 | Transactional serving state; persist the corrected summary only after listener review/approval and a generated queue only after explicit Save; consent ledger gates import and persistence; not implemented. |
 | User activity event history (target) | Kafka topics with Avro values; HDFS Avro archive; compacted Parquet for analytics | AP11 | Append-only integration/event contract; not the login-time state store; no producer/consumer/registry/archive implemented. |
 | Model invocation telemetry (target) | OpenTelemetry metrics/traces plus Avro Kafka topic, HDFS archive, and compacted Parquet | AP12 | Operational metrics/traces separated from durable analysis; no prompt/response capture or account IDs; pipeline not implemented. |
@@ -431,16 +435,15 @@ music entities; profile-to-catalog references retain source `track_id` values an
 are checked against the current catalog snapshot by the service.
 
 For the demo-profile extension, `listener_id` is unique in the seed file, but it is
-not evidence of an authenticated account or stable ID in a deployed app. Bind a
-demo profile to the authenticated principal through an explicit mapping rather
-than trusting a browser-supplied integer. All 14 top-artist labels currently have
-unique normalized matches. Genre labels do not: several normalized forms map to
-multiple `genre_id` rows, and `Afrobeats`, `Lo-fi`, and `R&B` do not directly
-identify a track-genre row. Build a curated, versioned `PROFILE GENRE ALIAS`
-crosswalk, report unmatched/ambiguous values, and choose whether each preference
-maps to direct track genres, artist-tag genres, or both. Artist/genre integer IDs
-are regenerated by the transform, so build the crosswalk against the same catalog
-build or use stable natural keys/build IDs.
+not evidence of an authenticated account or stable ID in a deployed app. The demo
+endpoint accepts an explicitly selected fixture ID and checks it against the
+read-only seed view; production must bind a profile to the authenticated principal
+instead. All 14 top-artist labels currently have unique normalized matches. A
+version-1 `PROFILE_GENRE_CROSSWALK` maps each of the 12 profile labels to a
+deliberate canonical genre name, then resolves that natural name against the
+active catalog snapshot. The service reports unmatched/ambiguous artists and
+genres rather than guessing. Transform-generated genre IDs are never persisted
+as cross-build identity.
 
 ### Logical ERD and relational rules
 
@@ -1048,19 +1051,21 @@ reproducible benchmark report should still record machine/runtime versions,
 dataset version, warm/cold cache behavior, repetitions, median/p95, plans, and
 whether the actual request uses DuckDB or PostgreSQL.
 
-### Demo profile-to-catalog link (proposed)
+### Demo profile-to-catalog link
 
-The streaming-habits file is an easy seed for profile-oriented demo interactions,
-but its `top_artist` and `top_genre` text values are not foreign keys and it has no
-track ID. A relational connection is still possible. All 14 artist labels have
-unique normalized matches in the current catalog; the genre labels need a curated
-crosswalk because catalog genre names are noisy and non-unique after normalization.
-Store the crosswalk as `profile_genre_alias(source_label, genre_id, mapping_version)`
-and allow a profile label to map to zero, one, or several relevant genre IDs. Then
-join a top artist through `track_artists` to `tracks`, and/or join mapped genres to
-`tracks.genre_id` and `artist_genres`/`track_artists`. Deduplicate track results
-when both preference paths match. These joins can run in DuckDB across a loaded
-CSV/Parquet profile relation and the existing Parquet-backed catalog views; data
+The streaming-habits file seeds static profile-oriented demo interactions, but
+its `top_artist` and `top_genre` text values are not foreign keys and it has no
+track ID. All 14 artist labels have unique normalized matches in the current
+catalog. The implemented version-1 genre crosswalk maps each of the 12 profile
+labels to one canonical genre name and resolves that natural name against the
+active catalog; unmatched and ambiguous results are reported. The API joins a
+top artist through `track_artists` to `tracks`, and/or a mapped genre to
+`tracks.genre_id`; it deduplicates and limits results to 40 tracks. These joins
+run in DuckDB across the read-only CSV profile view and Parquet-backed catalog
+views. Only top artist, genre, and mood are shared with the model. Other profile
+attributes stay in the browser, and the selected fixture ID is not an authenticated
+user identity. For production, bind an authenticated principal to an owner-scoped
+PostgreSQL profile rather than accepting a browser-selected ID.
 does not have to be in one physical file or database. The existing DuckDB service
 would need a profile relation and a user-scoped lookup tool/API route before the
 AI can use it.
@@ -1093,13 +1098,14 @@ This illustrates the artist path only. For genre retrieval, first join the profi
 label to the curated `profile_genre_alias` table; exact punctuation-stripped
 matching is not reliable for this catalog's genre variants.
 
-For a **read-only seeded demo**, the simplest option is a DuckDB view over a
-profile CSV/Parquet fixture plus the normalized crosswalk. If users can edit/save
-their profile, use PostgreSQL serving tables keyed to an authenticated identity
-(separate schema/table boundary from the catalog's `music_reader` allowlist) and
-let the API fetch only the current user's approved fields. Never let a user-provided
-`listener_id` alone authorize access. Do not route profile tables through the
-model-generated generic SQL fallback.
+The current read-only demo uses a DuckDB view over the profile CSV and the
+normalized crosswalk. The API resolves the explicitly selected fixture ID only
+after the browser consent gate; this is a demo selector, not authentication. If
+users can edit/save their profile, use PostgreSQL serving tables keyed to an
+authenticated identity (separate schema/table boundary from the catalog's
+`music_reader` allowlist) and let the API fetch only the current user's approved
+fields. Never let a user-provided `listener_id` alone authorize production access.
+Do not route profile tables through the model-generated generic SQL fallback.
 
 The file's `daily_listening_minutes`, `songs_per_day`, `playlists_count`, and
 `skip_rate_pct` are aggregate attributes; there are no individual listens, skips,
@@ -1434,12 +1440,13 @@ The AI model has no direct DuckDB or PostgreSQL connection. The API calls a boun
 DuckDB tool service; the model can also propose one PostgreSQL fallback `SELECT`,
 which is parsed and restricted before execution.
 
-The demo-profile lookup described under AP9 is not part of the current contract.
-If added, the API should resolve the authenticated/demo principal to one profile
-before preparing recommendation context. The same owner-scoped API boundary applies
-to conversations and memories. Do not allow the model to select arbitrary
-`listener_id` values, directly retrieve another user's context, or query
-profile/conversation tables through the generic SQL fallback.
+The demo-profile lookup in AP9 is an explicit API route with a selected fixture ID;
+the model cannot select the ID. For a production account, the API must resolve the
+authenticated principal to one owner-scoped profile before preparing recommendation
+context. The same owner-scoped API boundary applies to conversations and memories.
+Do not allow the model to select arbitrary `listener_id` values, directly retrieve
+another user's context, or query profile/conversation tables through the generic
+SQL fallback.
 For the proposed listener flow, the API must fail closed when required consent is
 missing or withdrawn. Imported rows need explicit review status, and only reviewed
 rows, confirmed preferences, and catalog attributes may support queue explanations.
@@ -1454,7 +1461,7 @@ is disabled unless the listener has separately opted in.
 | DuckDB `compare_genres` | Genre ID/name, track count, average popularity/energy/danceability/tempo, explicit percentage | At most 20 requested genres; max 100 results. |
 | PostgreSQL fallback | Tables `album`, `album_scores`, `artist_genres`, `artists`, `genre`, `track_artists`, `track_feel`, `tracks`; columns allowlisted in `backend/main.py` | Single `SELECT`; no schema-qualified objects or writes; 100-row cap; 8-second statement timeout; read-only `music_reader` role. |
 | Model prompt context | User prompt, approved taste/profile detail, selected catalog rows | Sent to configured Cloudflare Worker. Do not include secrets or unnecessary personal data. |
-| Proposed demo profile lookup | Only the current authenticated/demo profile's approved taste fields and mapped artist/genre preferences | API-scoped lookup; no arbitrary user-ID selection by the model; not implemented today. |
+| Demo profile lookup | Selected static fixture profile plus artist/genre mapping status and at most 40 matched catalog tracks | Explicit API route, outside the model-generated SQL allowlist. Browser-selected IDs are not authenticated principals. Only top artist, genre, and mood are sent to the model; remaining fixture attributes stay local. |
 | Proposed recent conversation context | Bounded window of the authenticated user's own recent messages | API conversation service applies owner and expiry filters; send only the minimum needed to the configured model provider; no direct DB access. |
 | Proposed topic-memory retrieval | A small number of relevant, unexpired topic summaries; no raw transcript by default | `user_id` and expiry filter before semantic search; rank with similarity/recency/confidence/importance; treat recalled text as untrusted user content, not instructions. |
 | Proposed model telemetry | Invocation/trace IDs, provider/model/task, duration, outcome, retry count, optional provider usage, bounded tool metadata | API/Collector instrumentation; no raw prompts/responses, credentials, user IDs, or full catalog rows; separate telemetry ACL and retention. |

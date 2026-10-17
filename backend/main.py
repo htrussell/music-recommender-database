@@ -858,6 +858,56 @@ def import_youtube_playlist(request: YouTubePlaylistRequest) -> dict[str, Any]:
     return load_youtube_playlist(request.playlistUrl)
 
 
+@app.get("/api/demo-profile/{listener_id}")
+def load_demo_profile(listener_id: int) -> dict[str, Any]:
+    if listener_id < 1:
+        raise HTTPException(status_code=422, detail="Demo listener ID must be a positive integer.")
+    try:
+        response = httpx.get(
+            f"{DUCKDB_URL.rstrip('/')}/demo-profiles/{listener_id}",
+            timeout=10.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        try:
+            detail = error.response.json().get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+        detail_message = detail if isinstance(detail, str) else str(error)
+        if error.response.status_code in {404, 422}:
+            raise HTTPException(
+                status_code=error.response.status_code,
+                detail=detail_message,
+            ) from error
+        if error.response.status_code >= 500:
+            raise HTTPException(
+                status_code=503,
+                detail=f"DuckDB demo-profile lookup failed: {detail_message}",
+            ) from error
+        raise HTTPException(
+            status_code=502,
+            detail=f"DuckDB rejected the demo-profile request: {detail_message}",
+        ) from error
+    except httpx.RequestError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach the DuckDB catalog service: {error}",
+        ) from error
+
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="DuckDB returned an invalid demo-profile response.") from error
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("profile"), dict)
+        or not isinstance(payload.get("tracks"), list)
+        or any(not isinstance(track, dict) for track in payload["tracks"])
+    ):
+        raise HTTPException(status_code=502, detail="DuckDB returned an invalid demo-profile response.")
+    return payload
+
+
 def normalize_track_identity(value: str) -> str:
     return "".join(
         character

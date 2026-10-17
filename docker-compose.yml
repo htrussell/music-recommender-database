@@ -57,9 +57,11 @@ services:
     environment:
       MUSIC_DATA_DIR: /data/transformed
       MUSICBRAINZ_PARQUET: /data/musicbrainz/recordings.parquet
+      DEMO_PROFILE_CSV: /data/source/music_streaming_habits_2026.csv
     volumes:
       - ./transformed:/data/transformed:ro
       - ./musicbrainz:/data/musicbrainz:ro
+      - ./csv/music_streaming_habits_2026.csv:/data/source/music_streaming_habits_2026.csv:ro
     networks:
       - music-network
     healthcheck:

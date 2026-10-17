@@ -10,7 +10,9 @@ class DuckDBCatalogToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.previous_connection = duckdb_service.connection
         self.previous_musicbrainz_index_available = duckdb_service.musicbrainz_index_available
+        self.previous_demo_profiles_available = duckdb_service.demo_profiles_available
         duckdb_service.musicbrainz_index_available = False
+        duckdb_service.demo_profiles_available = False
         duckdb_service.connection = duckdb.connect(":memory:")
         connection = duckdb_service.connection
         connection.execute(
@@ -57,6 +59,7 @@ class DuckDBCatalogToolTests(unittest.TestCase):
         duckdb_service.connection.close()
         duckdb_service.connection = self.previous_connection
         duckdb_service.musicbrainz_index_available = self.previous_musicbrainz_index_available
+        duckdb_service.demo_profiles_available = self.previous_demo_profiles_available
 
     def test_track_search_uses_bound_filters_and_applies_explicit_exclusion(self) -> None:
         response = duckdb_service.query_catalog(
@@ -85,6 +88,69 @@ class DuckDBCatalogToolTests(unittest.TestCase):
         )
 
         self.assertEqual(response["rows"], [])
+
+    def test_demo_profile_maps_artist_and_genre_to_bounded_catalog_tracks(self) -> None:
+        assert duckdb_service.connection is not None
+        duckdb_service.connection.execute(
+            """
+            CREATE TABLE demo_listener_profiles (
+                listener_id INTEGER, age INTEGER, country VARCHAR, platform VARCHAR,
+                subscription VARCHAR, top_genre VARCHAR, top_artist VARCHAR,
+                daily_listening_minutes INTEGER, songs_per_day INTEGER, playlists_count INTEGER,
+                skip_rate_pct DOUBLE, discover_weekly_user BOOLEAN, top_mood VARCHAR,
+                uses_offline_mode BOOLEAN, podcasts_too BOOLEAN
+            )
+            """
+        )
+        duckdb_service.connection.execute(
+            "INSERT INTO demo_listener_profiles VALUES "
+            "(1, 24, 'US', 'Spotify', 'Free', 'Jazz', 'Alice', 90, 20, 3, "
+            "12.5, true, 'Focus', false, true)"
+        )
+        duckdb_service.demo_profiles_available = True
+
+        response = duckdb_service.get_demo_profile(1)
+
+        self.assertEqual(response["profile"]["listener_id"], 1)
+        self.assertEqual(response["artist_mapping_status"], "matched")
+        self.assertEqual(response["genre_mapping_status"], "matched")
+        self.assertEqual(response["matched_genre"]["genre_name"], "Jazz")
+        self.assertEqual(
+            {track["catalog_track_id"] for track in response["tracks"]},
+            {"t1", "t2"},
+        )
+        alice_track = next(track for track in response["tracks"] if track["catalog_track_id"] == "t1")
+        self.assertEqual(alice_track["artist"], "Alice")
+        self.assertEqual(alice_track["profile_match"], ["top_artist", "top_genre"])
+
+    def test_demo_profile_reports_unmatched_labels_and_unknown_ids(self) -> None:
+        assert duckdb_service.connection is not None
+        duckdb_service.connection.execute(
+            """
+            CREATE TABLE demo_listener_profiles (
+                listener_id INTEGER, age INTEGER, country VARCHAR, platform VARCHAR,
+                subscription VARCHAR, top_genre VARCHAR, top_artist VARCHAR,
+                daily_listening_minutes INTEGER, songs_per_day INTEGER, playlists_count INTEGER,
+                skip_rate_pct DOUBLE, discover_weekly_user BOOLEAN, top_mood VARCHAR,
+                uses_offline_mode BOOLEAN, podcasts_too BOOLEAN
+            )
+            """
+        )
+        duckdb_service.connection.execute(
+            "INSERT INTO demo_listener_profiles VALUES "
+            "(1, 24, 'US', 'Spotify', 'Free', 'Unmapped', 'Unknown Artist', 90, 20, 3, "
+            "12.5, true, 'Focus', false, true)"
+        )
+        duckdb_service.demo_profiles_available = True
+
+        response = duckdb_service.get_demo_profile(1)
+
+        self.assertEqual(response["artist_mapping_status"], "unmatched")
+        self.assertEqual(response["genre_mapping_status"], "unmatched")
+        self.assertEqual(response["tracks"], [])
+        with self.assertRaises(HTTPException) as error:
+            duckdb_service.get_demo_profile(2)
+        self.assertEqual(error.exception.status_code, 404)
 
     def test_track_verification_returns_catalog_pair_for_exact_title(self) -> None:
         response = duckdb_service.query_catalog(
