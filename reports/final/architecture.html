@@ -264,6 +264,15 @@
     .erd-step.primary { border-color: #4ca79c; background: var(--mint); }
     .erd-step.future { border-color: #a8b6c9; background: var(--blue); }
     .erd-arrow { align-self: center; color: var(--teal); font-size: 1.35rem; font-weight: 800; }
+    .erd-embed {
+      display: block;
+      width: 100%;
+      height: 850px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f5f7f8;
+    }
+    .erd-embed-link { margin: .55rem 0 1.25rem; font-size: .86rem; }
     .arch-flows { display: grid; gap: .85rem; }
     .arch-flow {
       display: grid;
@@ -319,6 +328,7 @@
       section { scroll-margin-top: 4.5rem; }
       .erd-entities { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .erd-entities.proposed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .erd-embed { height: 75vh; min-height: 620px; }
       .arch-flow { grid-template-columns: 1fr; }
       .arch-flow-track { grid-template-columns: 1fr; }
       .arch-flow-track.compact { grid-template-columns: 1fr; }
@@ -669,6 +679,25 @@
               <p class="relations">Summarize and persist a useful memory before deleting its transcript. Expiry/deletion removes the summary, vector, and source links. Retrieval falloff affects ranking but does not extend or replace hard expiry.</p>
             </div>
           </div>
+        </div>
+        <h3>Detailed ERD diagrams</h3>
+        <p>The Parquet catalog model above remains the canonical current data model. These diagrams provide a detailed relational view of the catalog and the proposed user-serving and conversation-memory schemas.</p>
+        <div class="erd-domain">
+          <h4>Current music catalog</h4>
+          <iframe class="erd-embed" src="./erd/current-catalog.html" title="Current music catalog entity-relationship diagram" loading="lazy"></iframe>
+          <p class="erd-embed-link"><a href="./erd/current-catalog.html">Open the current catalog ERD</a></p>
+        </div>
+        <div class="erd-domain">
+          <h4>Proposed user-serving schema</h4>
+          <p>Proposed design; these tables are not currently implemented.</p>
+          <iframe class="erd-embed" src="./erd/user-serving.html" title="Proposed user-serving entity-relationship diagram" loading="lazy"></iframe>
+          <p class="erd-embed-link"><a href="./erd/user-serving.html">Open the proposed user-serving ERD</a></p>
+        </div>
+        <div class="erd-domain">
+          <h4>Proposed conversation-memory schema</h4>
+          <p>Proposed design; persistent history is off by default and requires separate opt-in.</p>
+          <iframe class="erd-embed" src="./erd/conversation-memory.html" title="Proposed conversation-memory entity-relationship diagram" loading="lazy"></iframe>
+          <p class="erd-embed-link"><a href="./erd/conversation-memory.html">Open the proposed conversation-memory ERD</a></p>
         </div>
         <h3>Observed inventory</h3>
         <p>Measured from local files on 2026-10-16. Parquet sizes are compressed; growth is unknown because there is no retained refresh history.</p>
