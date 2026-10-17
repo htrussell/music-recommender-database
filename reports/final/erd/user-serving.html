@@ -19,8 +19,8 @@
     h1 { margin: 0; color: #183b4b; font-size: clamp(1.45rem, 3vw, 2rem); }
     .page-head p { flex-basis: 100%; margin: -.3rem 0 0; color: #50616b; line-height: 1.5; }
     .page-head nav { display: flex; flex-wrap: wrap; gap: .5rem; }
-    .page-head a { padding: .55rem .8rem; border: 1px solid #a9c6cd; border-radius: 6px; color: #164b61; background: #e8f3f5; font-weight: 700; text-decoration: none; white-space: nowrap; }
-    .page-head a:hover, .page-head a:focus-visible { background: #dcecef; }
+    .page-head a, .page-head button { padding: .55rem .8rem; border: 1px solid #a9c6cd; border-radius: 6px; color: #164b61; background: #e8f3f5; font: inherit; font-weight: 700; text-decoration: none; white-space: nowrap; cursor: pointer; }
+    .page-head a:hover, .page-head a:focus-visible, .page-head button:hover, .page-head button:focus-visible { background: #dcecef; }
     .notice { margin: 0 0 .8rem; padding: .65rem .8rem; border-left: 4px solid #bf8840; color: #5b482d; background: #fff7e9; font-size: .9rem; line-height: 1.45; }
     .diagram-frame { overflow-x: auto; border: 1px solid #d0d9dd; border-radius: 8px; background: #fff; box-shadow: 0 3px 12px #17324212; }
     svg { display: block; width: 100%; height: auto; }
@@ -61,6 +61,7 @@
     <header class="page-head">
       <h1>Proposed User-Serving ERD</h1>
       <nav aria-label="Related pages">
+        <button type="button" onclick="window.print()">Save as PDF</button>
         <a href="../architecture.html">Architecture overview</a>
         <a href="current-catalog.html">Current catalog ERD</a>
         <a href="conversation-memory.html">Conversation-memory ERD</a>
