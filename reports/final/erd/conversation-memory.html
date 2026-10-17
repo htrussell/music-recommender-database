@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Proposed Conversation-Memory ERD</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #1c252b;
+      background: #f5f7f8;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(1400px, calc(100% - 2rem)); margin: 0 auto; padding: 1.5rem 0 2rem; }
+    .page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-bottom: 1rem; }
+    h1 { margin: 0; color: #183b4b; font-size: clamp(1.45rem, 3vw, 2rem); }
+    .page-head p { flex-basis: 100%; margin: -.3rem 0 0; color: #50616b; line-height: 1.5; }
+    .page-head nav { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .page-head a { padding: .55rem .8rem; border: 1px solid #a9c6cd; border-radius: 6px; color: #164b61; background: #e8f3f5; font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .page-head a:hover, .page-head a:focus-visible { background: #dcecef; }
+    .notice { margin: 0 0 .8rem; padding: .65rem .8rem; border-left: 4px solid #bf8840; color: #5b482d; background: #fff7e9; font-size: .9rem; line-height: 1.45; }
+    .diagram-frame { overflow-x: auto; border: 1px solid #d0d9dd; border-radius: 8px; background: #fff; box-shadow: 0 3px 12px #17324212; }
+    svg { display: block; width: 100%; height: auto; }
+    .wire { fill: none; stroke: #273943; stroke-width: 2; stroke-linejoin: round; }
+    .wire.external { stroke-dasharray: 7 5; }
+    .glyph { fill: #fff; stroke: #17252c; stroke-width: 2; }
+    .glyph-line { fill: none; stroke: #17252c; stroke-width: 2; stroke-linecap: round; }
+    .legend-edge { fill: none; stroke: #17252c; stroke-width: 2; }
+    .entity-box { fill: #fff; stroke: #17252c; stroke-width: 2; }
+    .entity-head { stroke: #17252c; stroke-width: 2; }
+    .entity-title { fill: #14252d; font-size: 15px; font-weight: 700; text-anchor: middle; }
+    .field { fill: #1b252b; }
+    .kind-main .entity-head, .kind-user .entity-head { fill: #d8eceb; }
+    .kind-extension .entity-head, .kind-playlist .entity-head { fill: #e4ecd9; }
+    .kind-bridge .entity-head, .kind-transcript .entity-head, .kind-event .entity-head { fill: #dfe8f2; }
+    .kind-consent .entity-head, .kind-provenance .entity-head { fill: #f2e6ce; }
+    .kind-taste .entity-head, .kind-memory .entity-head { fill: #e5e0f2; }
+    .kind-external .entity-box { stroke-dasharray: 7 5; fill: #fbfcfc; }
+    .kind-external .entity-head { fill: #eef1f2; stroke-dasharray: 7 5; }
+    .legend-box { fill: #fbfcfc; stroke: #d7dfe2; }
+    .legend-title { fill: #344851; font-size: 13px; font-weight: 700; }
+    .legend-text { fill: #344851; font-size: 13px; }
+    .note-text { fill: #5b482d; font-size: 13px; }
+    @media (max-width: 600px) { main { width: calc(100% - 1rem); padding-top: .75rem; } }
+    @page { size: landscape; margin: .35in; }
+    @media print {
+      :root, body { background: white; }
+      main { width: 100%; padding: 0; }
+      .page-head { padding: .2in .3in .1in; }
+      .diagram-frame { overflow: visible; border: 0; border-radius: 0; box-shadow: none; }
+      svg { min-width: 0 !important; }
+      .page-head nav { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="page-head">
+      <h1>Proposed Conversation-Memory ERD</h1>
+      <nav aria-label="Related pages">
+        <a href="../architecture.html">Architecture overview</a>
+        <a href="current-catalog.html">Current catalog ERD</a>
+        <a href="user-serving.html">User-serving ERD</a>
+      </nav>
+      <p>Target design for short-lived conversation transcripts and compact, retrievable topic memories with expiry and deletion provenance.</p>
+    </header>
+    <p class="notice"><strong>Proposed design only.</strong> This is a separate PostgreSQL schema/database target. Persistent history is off by default and requires separate opt-in; only compact topic memories receive embeddings.</p>
+
+    <div class="diagram-frame">
+      <svg viewBox="0 0 1370 620" style="min-width:1100px" role="img" aria-labelledby="diagram-title diagram-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="diagram-title">Proposed Conversation-Memory ERD</title>
+        <desc id="diagram-desc">Five conversation-memory tables and five one-to-many relationships: APP_USER to CONVERSATION, APP_USER to TOPIC_MEMORY, CONVERSATION to MESSAGE, CONVERSATION to MEMORY_SOURCE, and TOPIC_MEMORY to MEMORY_SOURCE. Memory source rows link expiring topic memories to their source conversations without storing transcript content.</desc>
+        <g aria-hidden="true">
+          <path class="wire" d="M850 139 L850 190 L495 190 L495 250"/>
+          <path class="wire" d="M850 139 L850 190 L1205 190 L1205 250"/>
+          <path class="wire" d="M370 324 L280 324"/>
+          <path class="wire" d="M620 324 L710 324"/>
+          <path class="wire" d="M1070 324 L980 324"/>
+          <path class="glyph-line" d="M850 153 L842 139"/><path class="glyph-line" d="M850 153 L858 139"/><circle class="glyph" cx="850" cy="162" r="6"/>
+          <path class="glyph-line" d="M487 242 L503 242"/><path class="glyph-line" d="M487 234 L503 234"/>
+          <path class="glyph-line" d="M850 153 L842 139"/><path class="glyph-line" d="M850 153 L858 139"/><circle class="glyph" cx="850" cy="162" r="6"/>
+          <path class="glyph-line" d="M1197 242 L1213 242"/><path class="glyph-line" d="M1197 234 L1213 234"/>
+          <path class="glyph-line" d="M356 324 L370 316"/><path class="glyph-line" d="M356 324 L370 332"/><circle class="glyph" cx="347" cy="324" r="6"/>
+          <path class="glyph-line" d="M288 316 L288 332"/><path class="glyph-line" d="M296 316 L296 332"/>
+          <path class="glyph-line" d="M634 324 L620 332"/><path class="glyph-line" d="M634 324 L620 316"/><circle class="glyph" cx="643" cy="324" r="6"/>
+          <path class="glyph-line" d="M702 332 L702 316"/><path class="glyph-line" d="M694 332 L694 316"/>
+          <path class="glyph-line" d="M1056 324 L1070 316"/><path class="glyph-line" d="M1056 324 L1070 332"/><circle class="glyph" cx="1047" cy="324" r="6"/>
+          <path class="glyph-line" d="M988 316 L988 332"/><path class="glyph-line" d="M996 316 L996 332"/>
+        </g>
+        <g class="entity kind-user" aria-label="App User table">
+          <rect class="entity-box" x="735" y="50" width="230" height="89"/>
+          <rect class="entity-head" x="735" y="50" width="230" height="35"/>
+          <text class="entity-title" x="850" y="73">APP_USER</text>
+          <text class="field" style="font-size:14px" x="745" y="109">user_id [PK]</text>
+          <text class="field" style="font-size:14px" x="745" y="129">resolved by trusted API</text>
+        </g>
+        <g class="entity kind-transcript" aria-label="Message table">
+          <rect class="entity-box" x="30" y="250" width="250" height="189"/>
+          <rect class="entity-head" x="30" y="250" width="250" height="35"/>
+          <text class="entity-title" x="155" y="273">MESSAGE</text>
+          <text class="field" style="font-size:14px" x="40" y="309">message_id [PK]</text>
+          <text class="field" style="font-size:14px" x="40" y="329">conversation_id [FK]</text>
+          <text class="field" style="font-size:14px" x="40" y="349">sequence_no</text>
+          <text class="field" style="font-size:14px" x="40" y="369">role</text>
+          <text class="field" style="font-size:14px" x="40" y="389">body_text</text>
+          <text class="field" style="font-size:14px" x="40" y="409">created_at</text>
+          <text class="field" style="font-size:14px" x="40" y="429">expires_at</text>
+        </g>
+        <g class="entity kind-transcript" aria-label="Conversation table">
+          <rect class="entity-box" x="370" y="250" width="250" height="149"/>
+          <rect class="entity-head" x="370" y="250" width="250" height="35"/>
+          <text class="entity-title" x="495" y="273">CONVERSATION</text>
+          <text class="field" style="font-size:14px" x="380" y="309">conversation_id [PK]</text>
+          <text class="field" style="font-size:14px" x="380" y="329">user_id [FK]</text>
+          <text class="field" style="font-size:14px" x="380" y="349">created_at</text>
+          <text class="field" style="font-size:14px" x="380" y="369">last_activity</text>
+          <text class="field" style="font-size:14px" x="380" y="389">transcript_expires_at</text>
+        </g>
+        <g class="entity kind-provenance" aria-label="Memory Source table">
+          <rect class="entity-box" x="710" y="250" width="270" height="109"/>
+          <rect class="entity-head" x="710" y="250" width="270" height="35"/>
+          <text class="entity-title" x="845" y="273">MEMORY_SOURCE</text>
+          <text class="field" style="font-size:14px" x="720" y="309">memory_id [PK/FK]</text>
+          <text class="field" style="font-size:14px" x="720" y="329">source_conversation_id [PK/FK]</text>
+          <text class="field" style="font-size:14px" x="720" y="349">no transcript content</text>
+        </g>
+        <g class="entity kind-memory" aria-label="Topic Memory table">
+          <rect class="entity-box" x="1070" y="250" width="270" height="249"/>
+          <rect class="entity-head" x="1070" y="250" width="270" height="35"/>
+          <text class="entity-title" x="1205" y="273">TOPIC_MEMORY</text>
+          <text class="field" style="font-size:14px" x="1080" y="309">memory_id [PK]</text>
+          <text class="field" style="font-size:14px" x="1080" y="329">user_id [FK]</text>
+          <text class="field" style="font-size:14px" x="1080" y="349">topic</text>
+          <text class="field" style="font-size:14px" x="1080" y="369">summary_text</text>
+          <text class="field" style="font-size:14px" x="1080" y="389">embedding</text>
+          <text class="field" style="font-size:14px" x="1080" y="409">model_version</text>
+          <text class="field" style="font-size:14px" x="1080" y="429">confidence</text>
+          <text class="field" style="font-size:14px" x="1080" y="449">importance</text>
+          <text class="field" style="font-size:14px" x="1080" y="469">last_retrieved</text>
+          <text class="field" style="font-size:14px" x="1080" y="489">expires_at</text>
+        </g>
+        <g aria-label="Relationship notation legend">
+          <rect class="legend-box" x="30" y="450" width="330" height="108" rx="5"/>
+          <text class="legend-title" x="46" y="476">Relationship notation</text>
+          <path class="legend-edge" d="M54 495 V517"/>
+          <path class="wire" d="M54 506 H110"/>
+          <path class="glyph-line" d="M62 498 L62 514"/><path class="glyph-line" d="M70 498 L70 514"/>
+          <text class="legend-text" x="126" y="511">Exactly one</text>
+          <path class="legend-edge" d="M54 525 V547"/>
+          <path class="wire" d="M54 536 H110"/>
+          <path class="glyph-line" d="M68 536 L54 544"/><path class="glyph-line" d="M68 536 L54 528"/><circle class="glyph" cx="77" cy="536" r="6"/>
+          <text class="legend-text" x="126" y="541">Zero or many (0..*)</text>
+        </g>
+        <text class="note-text" x="30" y="590">Expiry/deletion removes the summary, vector, and source links; source rows store no transcript text.</text>
+      </svg>
+    </div>
+  </main>
+</body>
+</html>

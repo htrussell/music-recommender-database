@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Current Music Catalog ERD</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #1c252b;
+      background: #f5f7f8;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(1240px, calc(100% - 2rem)); margin: 0 auto; padding: 1.5rem 0 2rem; }
+    .page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-bottom: 1rem; }
+    h1 { margin: 0; color: #183b4b; font-size: clamp(1.45rem, 3vw, 2rem); }
+    .page-head p { flex-basis: 100%; margin: -.3rem 0 0; color: #50616b; line-height: 1.5; }
+    .page-head nav { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .page-head a { padding: .55rem .8rem; border: 1px solid #a9c6cd; border-radius: 6px; color: #164b61; background: #e8f3f5; font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .page-head a:hover, .page-head a:focus-visible { background: #dcecef; }
+    .notice { margin: 0 0 .8rem; padding: .65rem .8rem; border-left: 4px solid #bf8840; color: #5b482d; background: #fff7e9; font-size: .9rem; line-height: 1.45; }
+    .diagram-frame { overflow-x: auto; border: 1px solid #d0d9dd; border-radius: 8px; background: #fff; box-shadow: 0 3px 12px #17324212; }
+    svg { display: block; width: 100%; height: auto; }
+    .wire { fill: none; stroke: #273943; stroke-width: 2; stroke-linejoin: round; }
+    .wire.external { stroke-dasharray: 7 5; }
+    .glyph { fill: #fff; stroke: #17252c; stroke-width: 2; }
+    .glyph-line { fill: none; stroke: #17252c; stroke-width: 2; stroke-linecap: round; }
+    .legend-edge { fill: none; stroke: #17252c; stroke-width: 2; }
+    .entity-box { fill: #fff; stroke: #17252c; stroke-width: 2; }
+    .entity-head { stroke: #17252c; stroke-width: 2; }
+    .entity-title { fill: #14252d; font-size: 15px; font-weight: 700; text-anchor: middle; }
+    .field { fill: #1b252b; }
+    .kind-main .entity-head, .kind-user .entity-head { fill: #d8eceb; }
+    .kind-extension .entity-head, .kind-playlist .entity-head { fill: #e4ecd9; }
+    .kind-bridge .entity-head, .kind-transcript .entity-head, .kind-event .entity-head { fill: #dfe8f2; }
+    .kind-consent .entity-head, .kind-provenance .entity-head { fill: #f2e6ce; }
+    .kind-taste .entity-head, .kind-memory .entity-head { fill: #e5e0f2; }
+    .kind-external .entity-box { stroke-dasharray: 7 5; fill: #fbfcfc; }
+    .kind-external .entity-head { fill: #eef1f2; stroke-dasharray: 7 5; }
+    .legend-box { fill: #fbfcfc; stroke: #d7dfe2; }
+    .legend-title { fill: #344851; font-size: 13px; font-weight: 700; }
+    .legend-text { fill: #344851; font-size: 13px; }
+    .note-text { fill: #5b482d; font-size: 13px; }
+    @media (max-width: 600px) { main { width: calc(100% - 1rem); padding-top: .75rem; } }
+    @page { size: landscape; margin: .35in; }
+    @media print {
+      :root, body { background: white; }
+      main { width: 100%; padding: 0; }
+      .page-head { padding: .2in .3in .1in; }
+      .diagram-frame { overflow: visible; border: 0; border-radius: 0; box-shadow: none; }
+      svg { min-width: 0 !important; }
+      .page-head nav { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="page-head">
+      <h1>Current Music Catalog ERD</h1>
+      <nav aria-label="Related pages">
+        <a href="current-catalog.dbml" download>Download DBML source</a>
+      </nav>
+      <p>Eight implemented catalog tables. Connectors show the foreign-key relationships and cardinalities defined by the PostgreSQL DDL in <code>load_postgres.py</code>.</p>
+    </header>
+
+    <div class="diagram-frame">
+      <svg viewBox="0 0 1146 790" style="min-width:900px" role="img" aria-labelledby="diagram-title diagram-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="diagram-title">Current Music Catalog ERD</title>
+        <desc id="diagram-desc">Eight implemented catalog tables and nine foreign-key relationships. Genre relates to Album, Tracks, and Artist Genres; Album relates to Tracks and Album Scores; Tracks relates to Track Artists and Track Feel; Artists relates to Track Artists and Artist Genres. Nullable foreign keys show an optional parent.</desc>
+        <g aria-hidden="true">
+          <path class="wire" d="M324 104 L130 104 L130 243"/>
+          <path class="wire" d="M424 139 L424 243"/>
+          <path class="wire" d="M524 95 L620 95"/>
+          <path class="wire" d="M230 317 L324 317"/>
+          <path class="wire" d="M130 412 L130 500"/>
+          <path class="wire" d="M524 297 L620 297"/>
+          <path class="wire" d="M916 317 L820 317"/>
+          <path class="wire" d="M524 380 L572 380 L572 484 L620 484"/>
+          <path class="wire" d="M1016 243 L1016 95 L820 95"/>
+          <path class="glyph-line" d="M310 104 L324 96"/><path class="glyph-line" d="M310 104 L324 112"/><circle class="glyph" cx="301" cy="104" r="6"/>
+          <path class="glyph-line" d="M122 235 L138 235"/><circle class="glyph" cx="130" cy="225" r="6"/>
+          <path class="glyph-line" d="M424 153 L416 139"/><path class="glyph-line" d="M424 153 L432 139"/><circle class="glyph" cx="424" cy="162" r="6"/>
+          <path class="glyph-line" d="M416 235 L432 235"/><circle class="glyph" cx="424" cy="225" r="6"/>
+          <path class="glyph-line" d="M538 95 L524 103"/><path class="glyph-line" d="M538 95 L524 87"/><circle class="glyph" cx="547" cy="95" r="6"/>
+          <path class="glyph-line" d="M612 103 L612 87"/><path class="glyph-line" d="M604 103 L604 87"/>
+          <path class="glyph-line" d="M244 317 L230 325"/><path class="glyph-line" d="M244 317 L230 309"/><circle class="glyph" cx="253" cy="317" r="6"/>
+          <path class="glyph-line" d="M316 325 L316 309"/><circle class="glyph" cx="306" cy="317" r="6"/>
+          <path class="glyph-line" d="M138 420 L122 420"/><circle class="glyph" cx="130" cy="430" r="6"/>
+          <path class="glyph-line" d="M122 492 L138 492"/><path class="glyph-line" d="M122 484 L138 484"/>
+          <path class="glyph-line" d="M538 297 L524 305"/><path class="glyph-line" d="M538 297 L524 289"/><circle class="glyph" cx="547" cy="297" r="6"/>
+          <path class="glyph-line" d="M612 305 L612 289"/><path class="glyph-line" d="M604 305 L604 289"/>
+          <path class="glyph-line" d="M902 317 L916 309"/><path class="glyph-line" d="M902 317 L916 325"/><circle class="glyph" cx="893" cy="317" r="6"/>
+          <path class="glyph-line" d="M828 309 L828 325"/><path class="glyph-line" d="M836 309 L836 325"/>
+          <path class="glyph-line" d="M532 372 L532 388"/><circle class="glyph" cx="542" cy="380" r="6"/>
+          <path class="glyph-line" d="M612 492 L612 476"/><path class="glyph-line" d="M604 492 L604 476"/>
+          <path class="glyph-line" d="M1016 229 L1024 243"/><path class="glyph-line" d="M1016 229 L1008 243"/><circle class="glyph" cx="1016" cy="220" r="6"/>
+          <path class="glyph-line" d="M828 87 L828 103"/><path class="glyph-line" d="M836 87 L836 103"/>
+        </g>
+        <g class="entity kind-main" aria-label="Genre table">
+          <rect class="entity-box" x="324" y="50" width="200" height="89"/>
+          <rect class="entity-head" x="324" y="50" width="200" height="35"/>
+          <text class="entity-title" x="424" y="73">Genre</text>
+          <text class="field" style="font-size:15px" x="334" y="109">Genre ID [PK]</text>
+          <text class="field" style="font-size:15px" x="334" y="129">Genre Name</text>
+        </g>
+        <g class="entity kind-bridge" aria-label="Artist Genres table">
+          <rect class="entity-box" x="620" y="50" width="200" height="89"/>
+          <rect class="entity-head" x="620" y="50" width="200" height="35"/>
+          <text class="entity-title" x="720" y="73">Artist Genres</text>
+          <text class="field" style="font-size:15px" x="630" y="109">Artist ID [PK/FK]</text>
+          <text class="field" style="font-size:15px" x="630" y="129">Genre ID [PK/FK]</text>
+        </g>
+        <g class="entity kind-main" aria-label="Album table">
+          <rect class="entity-box" x="30" y="243" width="200" height="169"/>
+          <rect class="entity-head" x="30" y="243" width="200" height="35"/>
+          <text class="entity-title" x="130" y="266">Album</text>
+          <text class="field" style="font-size:15px" x="40" y="302">Album ID [PK]</text>
+          <text class="field" style="font-size:15px" x="40" y="322">Genre ID [FK, 0..1]</text>
+          <text class="field" style="font-size:15px" x="40" y="342">Album Name</text>
+          <text class="field" style="font-size:15px" x="40" y="362">Album Format</text>
+          <text class="field" style="font-size:15px" x="40" y="382">Release Date</text>
+          <text class="field" style="font-size:15px" x="40" y="402">Label</text>
+        </g>
+        <g class="entity kind-main" aria-label="Tracks table">
+          <rect class="entity-box" x="324" y="243" width="200" height="189"/>
+          <rect class="entity-head" x="324" y="243" width="200" height="35"/>
+          <text class="entity-title" x="424" y="266">Tracks</text>
+          <text class="field" style="font-size:15px" x="334" y="302">Track ID [PK]</text>
+          <text class="field" style="font-size:15px" x="334" y="322">Album ID [FK, 0..1]</text>
+          <text class="field" style="font-size:15px" x="334" y="342">Genre ID [FK, 0..1]</text>
+          <text class="field" style="font-size:15px" x="334" y="362">Track Name</text>
+          <text class="field" style="font-size:15px" x="334" y="382">Popularity</text>
+          <text class="field" style="font-size:15px" x="334" y="402">Duration (ms)</text>
+          <text class="field" style="font-size:15px" x="334" y="422">Explicit</text>
+        </g>
+        <g class="entity kind-bridge" aria-label="Track Artists table">
+          <rect class="entity-box" x="620" y="243" width="200" height="89"/>
+          <rect class="entity-head" x="620" y="243" width="200" height="35"/>
+          <text class="entity-title" x="720" y="266">Track Artists</text>
+          <text class="field" style="font-size:15px" x="630" y="302">Track ID [PK/FK]</text>
+          <text class="field" style="font-size:15px" x="630" y="322">Artist ID [PK/FK]</text>
+        </g>
+        <g class="entity kind-main" aria-label="Artists table">
+          <rect class="entity-box" x="916" y="243" width="200" height="129"/>
+          <rect class="entity-head" x="916" y="243" width="200" height="35"/>
+          <text class="entity-title" x="1016" y="266">Artists</text>
+          <text class="field" style="font-size:15px" x="926" y="302">Artist ID [PK]</text>
+          <text class="field" style="font-size:15px" x="926" y="322">Artist Name</text>
+          <text class="field" style="font-size:15px" x="926" y="342">Artist Country</text>
+          <text class="field" style="font-size:15px" x="926" y="362">Artist Popularity</text>
+        </g>
+        <g class="entity kind-extension" aria-label="Album Scores table">
+          <rect class="entity-box" x="30" y="500" width="200" height="229"/>
+          <rect class="entity-head" x="30" y="500" width="200" height="35"/>
+          <text class="entity-title" x="130" y="523">Album Scores</text>
+          <text class="field" style="font-size:15px" x="40" y="559">Album ID [PK/FK]</text>
+          <text class="field" style="font-size:15px" x="40" y="579">Metacritic Critic Score</text>
+          <text class="field" style="font-size:15px" x="40" y="599">Metacritic Critic Count</text>
+          <text class="field" style="font-size:15px" x="40" y="619">Metacritic User Score</text>
+          <text class="field" style="font-size:15px" x="40" y="639">Metacritic User Count</text>
+          <text class="field" style="font-size:15px" x="40" y="659">AOTY Critic Score</text>
+          <text class="field" style="font-size:15px" x="40" y="679">AOTY Critic Count</text>
+          <text class="field" style="font-size:15px" x="40" y="699">AOTY User Score</text>
+          <text class="field" style="font-size:15px" x="40" y="719">AOTY User Count</text>
+        </g>
+        <g class="entity kind-extension" aria-label="Track Feel table">
+          <rect class="entity-box" x="620" y="430" width="200" height="309"/>
+          <rect class="entity-head" x="620" y="430" width="200" height="35"/>
+          <text class="entity-title" x="720" y="453">Track Feel</text>
+          <text class="field" style="font-size:15px" x="630" y="489">Track ID [PK/FK]</text>
+          <text class="field" style="font-size:15px" x="630" y="509">Danceability</text>
+          <text class="field" style="font-size:15px" x="630" y="529">Energy</text>
+          <text class="field" style="font-size:15px" x="630" y="549">Key</text>
+          <text class="field" style="font-size:15px" x="630" y="569">Loudness</text>
+          <text class="field" style="font-size:15px" x="630" y="589">Mode</text>
+          <text class="field" style="font-size:15px" x="630" y="609">Speechiness</text>
+          <text class="field" style="font-size:15px" x="630" y="629">Acousticness</text>
+          <text class="field" style="font-size:15px" x="630" y="649">Instrumentalness</text>
+          <text class="field" style="font-size:15px" x="630" y="669">Liveness</text>
+          <text class="field" style="font-size:15px" x="630" y="689">Valence</text>
+          <text class="field" style="font-size:15px" x="630" y="709">Tempo</text>
+          <text class="field" style="font-size:15px" x="630" y="729">Time Signature</text>
+        </g>
+        <g aria-label="Relationship notation legend">
+          <rect class="legend-box" x="886" y="450" width="250" height="138" rx="5"/>
+          <text class="legend-title" x="902" y="476">Relationship notation</text>
+          <path class="legend-edge" d="M910 495 V517"/>
+          <path class="wire" d="M910 506 H966"/>
+          <path class="glyph-line" d="M918 498 L918 514"/><circle class="glyph" cx="928" cy="506" r="6"/>
+          <text class="legend-text" x="982" y="511">Optional parent (0..1)</text>
+          <path class="legend-edge" d="M910 525 V547"/>
+          <path class="wire" d="M910 536 H966"/>
+          <path class="glyph-line" d="M924 536 L910 544"/><path class="glyph-line" d="M924 536 L910 528"/><circle class="glyph" cx="933" cy="536" r="6"/>
+          <text class="legend-text" x="982" y="541">Zero or many (0..*)</text>
+          <path class="legend-edge" d="M910 555 V577"/>
+          <path class="wire" d="M910 566 H966"/>
+          <path class="glyph-line" d="M918 558 L918 574"/><path class="glyph-line" d="M926 558 L926 574"/>
+          <text class="legend-text" x="982" y="571">Exactly one</text>
+        </g>
+      </svg>
+    </div>
+  </main>
+</body>
+</html>

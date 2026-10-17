@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Proposed User-Serving ERD</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #1c252b;
+      background: #f5f7f8;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(1600px, calc(100% - 2rem)); margin: 0 auto; padding: 1.5rem 0 2rem; }
+    .page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-bottom: 1rem; }
+    h1 { margin: 0; color: #183b4b; font-size: clamp(1.45rem, 3vw, 2rem); }
+    .page-head p { flex-basis: 100%; margin: -.3rem 0 0; color: #50616b; line-height: 1.5; }
+    .page-head nav { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .page-head a { padding: .55rem .8rem; border: 1px solid #a9c6cd; border-radius: 6px; color: #164b61; background: #e8f3f5; font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .page-head a:hover, .page-head a:focus-visible { background: #dcecef; }
+    .notice { margin: 0 0 .8rem; padding: .65rem .8rem; border-left: 4px solid #bf8840; color: #5b482d; background: #fff7e9; font-size: .9rem; line-height: 1.45; }
+    .diagram-frame { overflow-x: auto; border: 1px solid #d0d9dd; border-radius: 8px; background: #fff; box-shadow: 0 3px 12px #17324212; }
+    svg { display: block; width: 100%; height: auto; }
+    .wire { fill: none; stroke: #273943; stroke-width: 2; stroke-linejoin: round; }
+    .wire.external { stroke-dasharray: 7 5; }
+    .glyph { fill: #fff; stroke: #17252c; stroke-width: 2; }
+    .glyph-line { fill: none; stroke: #17252c; stroke-width: 2; stroke-linecap: round; }
+    .legend-edge { fill: none; stroke: #17252c; stroke-width: 2; }
+    .entity-box { fill: #fff; stroke: #17252c; stroke-width: 2; }
+    .entity-head { stroke: #17252c; stroke-width: 2; }
+    .entity-title { fill: #14252d; font-size: 15px; font-weight: 700; text-anchor: middle; }
+    .field { fill: #1b252b; }
+    .kind-main .entity-head, .kind-user .entity-head { fill: #d8eceb; }
+    .kind-extension .entity-head, .kind-playlist .entity-head { fill: #e4ecd9; }
+    .kind-bridge .entity-head, .kind-transcript .entity-head, .kind-event .entity-head { fill: #dfe8f2; }
+    .kind-consent .entity-head, .kind-provenance .entity-head { fill: #f2e6ce; }
+    .kind-taste .entity-head, .kind-memory .entity-head { fill: #e5e0f2; }
+    .kind-external .entity-box { stroke-dasharray: 7 5; fill: #fbfcfc; }
+    .kind-external .entity-head { fill: #eef1f2; stroke-dasharray: 7 5; }
+    .legend-box { fill: #fbfcfc; stroke: #d7dfe2; }
+    .legend-title { fill: #344851; font-size: 13px; font-weight: 700; }
+    .legend-text { fill: #344851; font-size: 13px; }
+    .note-text { fill: #5b482d; font-size: 13px; }
+    @media (max-width: 600px) { main { width: calc(100% - 1rem); padding-top: .75rem; } }
+    @page { size: landscape; margin: .35in; }
+    @media print {
+      :root, body { background: white; }
+      main { width: 100%; padding: 0; }
+      .page-head { padding: .2in .3in .1in; }
+      .diagram-frame { overflow: visible; border: 0; border-radius: 0; box-shadow: none; }
+      svg { min-width: 0 !important; }
+      .page-head nav { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="page-head">
+      <h1>Proposed User-Serving ERD</h1>
+      <nav aria-label="Related pages">
+        <a href="../architecture.html">Architecture overview</a>
+        <a href="current-catalog.html">Current catalog ERD</a>
+        <a href="conversation-memory.html">Conversation-memory ERD</a>
+      </nav>
+      <p>Target design for authenticated listener data, consent, imported playlists, saved queues, and transactional event publishing.</p>
+    </header>
+    <p class="notice"><strong>Proposed design only.</strong> These entities and relationships are architectural targets, not tables currently implemented in the database. Catalog track references use stable external IDs and are not database foreign keys.</p>
+
+    <div class="diagram-frame">
+      <svg viewBox="0 0 1560 780" style="min-width:1400px" role="img" aria-labelledby="diagram-title diagram-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="diagram-title">Proposed User-Serving ERD</title>
+        <desc id="diagram-desc">Nine user-serving tables plus an external catalog-track reference. APP_USER relates to USER_PROFILE (one to zero or one) and to CONSENT_EVENT, USER_PREFERENCE, USER_PLAYLIST, SAVED_QUEUE, and EVENT_OUTBOX (each one to zero or many). USER_PLAYLIST relates to PLAYLIST_TRACK (one to zero or many). SAVED_QUEUE relates to SAVED_QUEUE_TRACK (one to one or many). The external CATALOG TRACK reference relates to resolved PLAYLIST_TRACK rows (one to zero or many); it is not a foreign key.</desc>
+        <g aria-hidden="true">
+          <path class="wire" d="M780 179 L780 230 L145 230 L145 260"/>
+          <path class="wire" d="M780 179 L780 230 L399 230 L399 260"/>
+          <path class="wire" d="M780 179 L780 230 L653 230 L653 260"/>
+          <path class="wire" d="M780 179 L780 230 L907 230 L907 260"/>
+          <path class="wire" d="M780 179 L780 230 L1161 230 L1161 260"/>
+          <path class="wire" d="M780 179 L780 230 L1415 230 L1415 260"/>
+          <path class="wire" d="M907 429 L907 540"/>
+          <path class="wire" d="M1161 429 L1161 540"/>
+          <path class="wire external" d="M680 600 L792 600"/>
+          <path class="glyph-line" d="M788 187 L772 187"/><circle class="glyph" cx="780" cy="197" r="6"/>
+          <path class="glyph-line" d="M137 252 L153 252"/><path class="glyph-line" d="M137 244 L153 244"/>
+          <path class="glyph-line" d="M780 193 L772 179"/><path class="glyph-line" d="M780 193 L788 179"/><circle class="glyph" cx="780" cy="202" r="6"/>
+          <path class="glyph-line" d="M391 252 L407 252"/><path class="glyph-line" d="M391 244 L407 244"/>
+          <path class="glyph-line" d="M780 193 L772 179"/><path class="glyph-line" d="M780 193 L788 179"/><circle class="glyph" cx="780" cy="202" r="6"/>
+          <path class="glyph-line" d="M645 252 L661 252"/><path class="glyph-line" d="M645 244 L661 244"/>
+          <path class="glyph-line" d="M780 193 L772 179"/><path class="glyph-line" d="M780 193 L788 179"/><circle class="glyph" cx="780" cy="202" r="6"/>
+          <path class="glyph-line" d="M899 252 L915 252"/><path class="glyph-line" d="M899 244 L915 244"/>
+          <path class="glyph-line" d="M780 193 L772 179"/><path class="glyph-line" d="M780 193 L788 179"/><circle class="glyph" cx="780" cy="202" r="6"/>
+          <path class="glyph-line" d="M1153 252 L1169 252"/><path class="glyph-line" d="M1153 244 L1169 244"/>
+          <path class="glyph-line" d="M780 193 L772 179"/><path class="glyph-line" d="M780 193 L788 179"/><circle class="glyph" cx="780" cy="202" r="6"/>
+          <path class="glyph-line" d="M1407 252 L1423 252"/><path class="glyph-line" d="M1407 244 L1423 244"/>
+          <path class="glyph-line" d="M907 443 L899 429"/><path class="glyph-line" d="M907 443 L915 429"/><circle class="glyph" cx="907" cy="452" r="6"/>
+          <path class="glyph-line" d="M899 532 L915 532"/><path class="glyph-line" d="M899 524 L915 524"/>
+          <path class="glyph-line" d="M1161 443 L1153 429"/><path class="glyph-line" d="M1161 443 L1169 429"/><path class="glyph-line" d="M1169 451 L1153 451"/>
+          <path class="glyph-line" d="M1153 532 L1169 532"/><path class="glyph-line" d="M1153 524 L1169 524"/>
+          <path class="glyph-line" d="M694 600 L680 608"/><path class="glyph-line" d="M694 600 L680 592"/><circle class="glyph" cx="703" cy="600" r="6"/>
+          <path class="glyph-line" d="M784 608 L784 592"/><circle class="glyph" cx="774" cy="600" r="6"/>
+        </g>
+        <g class="entity kind-user" aria-label="App User table">
+          <rect class="entity-box" x="665" y="50" width="230" height="129"/>
+          <rect class="entity-head" x="665" y="50" width="230" height="35"/>
+          <text class="entity-title" x="780" y="73">APP_USER</text>
+          <text class="field" style="font-size:14px" x="675" y="109">user_id [PK]</text>
+          <text class="field" style="font-size:14px" x="675" y="129">auth_subject [UNIQUE]</text>
+          <text class="field" style="font-size:14px" x="675" y="149">created_at</text>
+          <text class="field" style="font-size:14px" x="675" y="169">deleted_at</text>
+        </g>
+        <g class="entity kind-user" aria-label="User Profile table">
+          <rect class="entity-box" x="30" y="260" width="230" height="169"/>
+          <rect class="entity-head" x="30" y="260" width="230" height="35"/>
+          <text class="entity-title" x="145" y="283">USER_PROFILE</text>
+          <text class="field" style="font-size:14px" x="40" y="319">user_id [PK/FK]</text>
+          <text class="field" style="font-size:14px" x="40" y="339">display_name?</text>
+          <text class="field" style="font-size:14px" x="40" y="359">taste_summary</text>
+          <text class="field" style="font-size:14px" x="40" y="379">summary_version</text>
+          <text class="field" style="font-size:14px" x="40" y="399">profile_version</text>
+          <text class="field" style="font-size:14px" x="40" y="419">updated_at</text>
+        </g>
+        <g class="entity kind-consent" aria-label="Consent Event table">
+          <rect class="entity-box" x="284" y="260" width="230" height="169"/>
+          <rect class="entity-head" x="284" y="260" width="230" height="35"/>
+          <text class="entity-title" x="399" y="283">CONSENT_EVENT</text>
+          <text class="field" style="font-size:14px" x="294" y="319">consent_event_id [PK]</text>
+          <text class="field" style="font-size:14px" x="294" y="339">user_id [FK]</text>
+          <text class="field" style="font-size:14px" x="294" y="359">purpose</text>
+          <text class="field" style="font-size:14px" x="294" y="379">decision</text>
+          <text class="field" style="font-size:14px" x="294" y="399">policy_version</text>
+          <text class="field" style="font-size:14px" x="294" y="419">recorded_at</text>
+        </g>
+        <g class="entity kind-taste" aria-label="User Preference table">
+          <rect class="entity-box" x="538" y="260" width="230" height="229"/>
+          <rect class="entity-head" x="538" y="260" width="230" height="35"/>
+          <text class="entity-title" x="653" y="283">USER_PREFERENCE</text>
+          <text class="field" style="font-size:14px" x="548" y="319">preference_id [PK]</text>
+          <text class="field" style="font-size:14px" x="548" y="339">user_id [FK]</text>
+          <text class="field" style="font-size:14px" x="548" y="359">type</text>
+          <text class="field" style="font-size:14px" x="548" y="379">value</text>
+          <text class="field" style="font-size:14px" x="548" y="399">weight?</text>
+          <text class="field" style="font-size:14px" x="548" y="419">catalog_key</text>
+          <text class="field" style="font-size:14px" x="548" y="439">catalog_build_id?</text>
+          <text class="field" style="font-size:14px" x="548" y="459">source</text>
+          <text class="field" style="font-size:14px" x="548" y="479">confirmed_at?</text>
+        </g>
+        <g class="entity kind-playlist" aria-label="User Playlist table">
+          <rect class="entity-box" x="792" y="260" width="230" height="169"/>
+          <rect class="entity-head" x="792" y="260" width="230" height="35"/>
+          <text class="entity-title" x="907" y="283">USER_PLAYLIST</text>
+          <text class="field" style="font-size:14px" x="802" y="319">playlist_id [PK]</text>
+          <text class="field" style="font-size:14px" x="802" y="339">user_id [FK]</text>
+          <text class="field" style="font-size:14px" x="802" y="359">name</text>
+          <text class="field" style="font-size:14px" x="802" y="379">source</text>
+          <text class="field" style="font-size:14px" x="802" y="399">created_at</text>
+          <text class="field" style="font-size:14px" x="802" y="419">updated_at</text>
+        </g>
+        <g class="entity kind-playlist" aria-label="Saved Queue table">
+          <rect class="entity-box" x="1046" y="260" width="230" height="169"/>
+          <rect class="entity-head" x="1046" y="260" width="230" height="35"/>
+          <text class="entity-title" x="1161" y="283">SAVED_QUEUE</text>
+          <text class="field" style="font-size:14px" x="1056" y="319">queue_id [PK]</text>
+          <text class="field" style="font-size:14px" x="1056" y="339">user_id [FK]</text>
+          <text class="field" style="font-size:14px" x="1056" y="359">queue_name?</text>
+          <text class="field" style="font-size:14px" x="1056" y="379">catalog_build_id</text>
+          <text class="field" style="font-size:14px" x="1056" y="399">created_at</text>
+          <text class="field" style="font-size:14px" x="1056" y="419">updated_at</text>
+        </g>
+        <g class="entity kind-event" aria-label="Event Outbox table">
+          <rect class="entity-box" x="1300" y="260" width="230" height="169"/>
+          <rect class="entity-head" x="1300" y="260" width="230" height="35"/>
+          <text class="entity-title" x="1415" y="283">EVENT_OUTBOX</text>
+          <text class="field" style="font-size:14px" x="1310" y="319">event_id [PK]</text>
+          <text class="field" style="font-size:14px" x="1310" y="339">user_id [FK]</text>
+          <text class="field" style="font-size:14px" x="1310" y="359">event_type</text>
+          <text class="field" style="font-size:14px" x="1310" y="379">version</text>
+          <text class="field" style="font-size:14px" x="1310" y="399">payload</text>
+          <text class="field" style="font-size:14px" x="1310" y="419">published_at?</text>
+        </g>
+        <g class="entity kind-playlist" aria-label="Playlist Track table">
+          <rect class="entity-box" x="792" y="540" width="230" height="189"/>
+          <rect class="entity-head" x="792" y="540" width="230" height="35"/>
+          <text class="entity-title" x="907" y="563">PLAYLIST_TRACK</text>
+          <text class="field" style="font-size:14px" x="802" y="599">playlist_id [PK/FK]</text>
+          <text class="field" style="font-size:14px" x="802" y="619">position [PK]</text>
+          <text class="field" style="font-size:14px" x="802" y="639">catalog_track_id?</text>
+          <text class="field" style="font-size:14px" x="802" y="659">title_snapshot</text>
+          <text class="field" style="font-size:14px" x="802" y="679">artist_snapshot</text>
+          <text class="field" style="font-size:14px" x="802" y="699">import_status</text>
+          <text class="field" style="font-size:14px" x="802" y="719">reason</text>
+        </g>
+        <g class="entity kind-playlist" aria-label="Saved Queue Track table">
+          <rect class="entity-box" x="1046" y="540" width="230" height="189"/>
+          <rect class="entity-head" x="1046" y="540" width="230" height="35"/>
+          <text class="entity-title" x="1161" y="563">SAVED_QUEUE_TRACK</text>
+          <text class="field" style="font-size:14px" x="1056" y="599">queue_id [PK/FK]</text>
+          <text class="field" style="font-size:14px" x="1056" y="619">position [PK]</text>
+          <text class="field" style="font-size:14px" x="1056" y="639">catalog_track_id</text>
+          <text class="field" style="font-size:14px" x="1056" y="659">title_snapshot</text>
+          <text class="field" style="font-size:14px" x="1056" y="679">artist_snapshot</text>
+          <text class="field" style="font-size:14px" x="1056" y="699">reason</text>
+          <text class="field" style="font-size:14px" x="1056" y="719">evidence_ref</text>
+        </g>
+        <g class="entity kind-external" aria-label="External Catalog Track reference">
+          <rect class="entity-box" x="450" y="565" width="230" height="89"/>
+          <rect class="entity-head" x="450" y="565" width="230" height="35"/>
+          <text class="entity-title" x="565" y="588">CATALOG TRACK</text>
+          <text class="field" style="font-size:14px" x="460" y="624">Stable external track ID</text>
+          <text class="field" style="font-size:14px" x="460" y="644">Reference only; not an FK</text>
+        </g>
+        <g aria-label="Relationship notation legend">
+          <rect class="legend-box" x="30" y="500" width="390" height="198" rx="5"/>
+          <text class="legend-title" x="46" y="526">Relationship notation</text>
+          <path class="legend-edge" d="M54 545 V567"/>
+          <path class="wire" d="M54 556 H110"/>
+          <path class="glyph-line" d="M62 548 L62 564"/><path class="glyph-line" d="M70 548 L70 564"/>
+          <text class="legend-text" x="126" y="561">Exactly one</text>
+          <path class="legend-edge" d="M54 575 V597"/>
+          <path class="wire" d="M54 586 H110"/>
+          <path class="glyph-line" d="M62 578 L62 594"/><circle class="glyph" cx="72" cy="586" r="6"/>
+          <text class="legend-text" x="126" y="591">Optional (0..1), e.g. profile</text>
+          <path class="legend-edge" d="M54 605 V627"/>
+          <path class="wire" d="M54 616 H110"/>
+          <path class="glyph-line" d="M68 616 L54 624"/><path class="glyph-line" d="M68 616 L54 608"/><circle class="glyph" cx="77" cy="616" r="6"/>
+          <text class="legend-text" x="126" y="621">Zero or many (0..*)</text>
+          <path class="legend-edge" d="M54 635 V657"/>
+          <path class="wire" d="M54 646 H110"/>
+          <path class="glyph-line" d="M68 646 L54 654"/><path class="glyph-line" d="M68 646 L54 638"/><path class="glyph-line" d="M76 638 L76 654"/>
+          <text class="legend-text" x="126" y="651">One or many (1..*), saved queue tracks</text>
+          <path class="legend-edge" d="M54 665 V687"/>
+          <path class="wire external" d="M54 676 H110"/>
+          <text class="legend-text" x="126" y="681">Reference by stable ID, not an FK</text>
+        </g>
+        <text class="note-text" x="30" y="740">Resolved catalog track IDs are stable external IDs, not foreign keys into a build-local catalog.</text>
+      </svg>
+    </div>
+  </main>
+</body>
+</html>
