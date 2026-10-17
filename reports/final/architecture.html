@@ -418,7 +418,7 @@
             <p class="arch-flow-note">PostgreSQL is a reloadable backup/fallback, not the canonical catalog source. User-profile and conversation schemas are future design and must be isolated from the destructive catalog loader.</p>
           </div>
         </div>
-        <p><strong>Snapshot size:</strong> 89,741 tracks, 87,152 albums, 39,528 artists, 90,603 genre labels; eight Parquet files total about 13.8 MB compressed. Playlist, profile, and conversation context remain session/request data today; there are no durable chat logs or long-term memories. The separate 4,000-row streaming-habits CSV is a candidate demo-profile seed, not authenticated users or event history. Ollama and <code>nomic-embed-text:v1.5</code> are configured, but no vector index or embedding retrieval is implemented.</p>
+        <p><strong>Snapshot size:</strong> 89,741 tracks, 87,152 albums, 39,528 artists, 90,603 genre labels; eight Parquet files total about 13.8 MB compressed. Playlist, selected demo profile, and conversation context remain session/request data today; there are no durable chat logs or long-term memories. The 4,000-row streaming-habits CSV is loaded as a static demo-profile fixture, not authenticated users or event history. Ollama and <code>nomic-embed-text:v1.5</code> are configured, but no vector index or embedding retrieval is implemented.</p>
         <div class="table-wrap"><table>
           <thead><tr><th>Criterion</th><th>Target</th><th>Status</th></tr></thead>
           <tbody>
@@ -438,7 +438,7 @@
           </tbody>
         </table></div>
         <p class="warning">Latency figures are not claimed. The primary DuckDB query path has not been benchmarked to a service-level target; the PostgreSQL fallback has an 8-second statement timeout.</p>
-        <p><strong>Scope:</strong> catalog discovery, playlist import context, static catalog ETL, DuckDB query serving, PostgreSQL backup/fallback, and proposed consent-led import/review, persistent profiles and explicitly saved queues, Kafka/Avro user events, short-lived conversation records, expiring pgvector-backed topic memories, privacy-minimized model telemetry, and analytic projections. The active queue remains session memory until explicit Save; PostgreSQL stores saved queue state and Kafka carries only asynchronous lifecycle events. Persistent chat history is off by default and requires separate opt-in. None of the proposed user/context/event/telemetry infrastructure is implemented. The streaming-habits CSV is a possible seed for demo profiles, but is not integrated yet.</p>
+        <p><strong>Scope:</strong> catalog discovery, playlist import context, static catalog ETL, DuckDB query serving, a read-only streaming-habits demo-profile lookup, PostgreSQL backup/fallback, and proposed consent-led import/review, persistent profiles and explicitly saved queues, Kafka/Avro user events, short-lived conversation records, expiring pgvector-backed topic memories, privacy-minimized model telemetry, and analytic projections. The active queue remains session memory until explicit Save; PostgreSQL stores saved queue state and Kafka carries only asynchronous lifecycle events. Persistent chat history is off by default and requires separate opt-in. Durable user/context/event/telemetry infrastructure remains proposed; the demo profile is an opt-in static fixture, not an authenticated or persistent account.</p>
         <p class="note">The current demo imports public YouTube playlists with <code>yt-dlp</code> and accepts normalized playlist JSON. The guide's import-method decision concerns the future product and remains open. Generated queues are transient today; the target lets the listener explicitly save a chosen queue in PostgreSQL. Queue inputs are imported playlist context and stated/confirmed profile data, not presumed live playback events.</p>
       </section>
 
@@ -683,10 +683,10 @@
             <tr><td>artists</td><td>Credits + artists.csv (1,466,083 source rows)</td><td>39,528</td><td>659,917</td><td>16.7</td><td>Unknown</td></tr>
             <tr><td>artist_genres</td><td>Matched MusicBrainz/Last.fm tags</td><td>669,441</td><td>1,582,516</td><td>2.4</td><td>Unknown</td></tr>
             <tr><td>genre</td><td>Track, album, and artist-tag labels</td><td>90,603</td><td>1,078,276</td><td>11.9</td><td>Unknown</td></tr>
-            <tr><td>Demo listener profile (proposed)</td><td>music_streaming_habits_2026.csv</td><td>4,000</td><td>340,693 CSV</td><td>85.2</td><td>Static seed</td></tr>
+            <tr><td>Demo listener profile fixture</td><td>music_streaming_habits_2026.csv</td><td>4,000</td><td>340,693 CSV</td><td>85.2</td><td>Read-only DuckDB seed; not telemetry</td></tr>
           </tbody>
         </table></div>
-        <p class="note">Eight catalog Parquet files total ~13.8 MB (13.2 MiB). The separate <code>music_streaming_habits_2026.csv</code> has 4,000 rows and may seed demo profiles; it is not application interaction telemetry.</p>
+        <p class="note">Eight catalog Parquet files total ~13.8 MB (13.2 MiB). The separate <code>music_streaming_habits_2026.csv</code> has 4,000 rows and seeds the read-only demo profile lookup; it is not application interaction telemetry or authenticated account data.</p>
         <h3>Access patterns</h3>
         <div class="table-wrap"><table>
           <thead><tr><th>ID</th><th>Read/write pattern</th><th>Frequency / target</th><th>Consumer</th></tr></thead>
@@ -698,7 +698,7 @@
             <tr><td>AP5</td><td>Allowlisted bounded PostgreSQL SELECT fallback.</td><td>Exception path; 8s statement timeout, ≤100 rows</td><td>AI API</td></tr>
             <tr><td>AP6/AP7</td><td>Manual source transform / Parquet-to-PostgreSQL batch reload.</td><td>On demand; no freshness target</td><td>Maintainer</td></tr>
             <tr><td>AP8</td><td>Ad hoc catalog analysis against Parquet/SQL.</td><td>Development/class project</td><td>Analyst</td></tr>
-            <tr><td>AP9 (proposed)</td><td>Resolve a demo profile by verified identity; use top artist and curated genre aliases to retrieve catalog tracks.</td><td>Each demo login/request; &lt;100ms profile read and &lt;5s total target, unmeasured</td><td>AI API / listener</td></tr>
+            <tr><td>AP9 (demo implemented)</td><td>Look up a selected static fixture ID; map its top artist and versioned genre alias, then retrieve at most 40 matching catalog tracks.</td><td>On explicit profile load; latency unmeasured; not an authenticated identity</td><td>AI API / listener</td></tr>
             <tr><td>AP10 (target)</td><td>Read/update owner-scoped profile, preferences, saved playlists and ordered entries.</td><td>Login/profile edit/playlist save; &lt;100ms profile read target, unmeasured</td><td>API / listener</td></tr>
             <tr><td>AP11 (target)</td><td>Publish versioned user activity/profile events; consume asynchronously for projections and analytics.</td><td>Per eligible action; p95 consumer lag &lt;5s target, unmeasured</td><td>API / Kafka consumers</td></tr>
             <tr><td>AP12 (target)</td><td>Append privacy-minimized model-call metadata; aggregate operational/analytic metrics without prompt, response, or account identity.</td><td>Every model call; collector/export freshness and overhead SLO TBD</td><td>API / operations / analyst</td></tr>
@@ -720,7 +720,7 @@
             <tr><td>Relational backup</td><td>PostgreSQL tables with PK/FK</td><td>AP5/AP7; backup and compatible fallback, not primary.</td></tr>
             <tr><td>Listener context</td><td>Browser-session JSON / request payload</td><td>AP1/AP2; no durable profile store is present.</td></tr>
             <tr><td>Persistent user state (proposed)</td><td>PostgreSQL <code>user_data</code> schema</td><td>Authoritative profiles, reviewed summaries, preferences, consent history, playlists, and listener-selected saved queues with ordered tracks/reason evidence; only persist after the applicable consent/review gate.</td></tr>
-            <tr><td>Demo listener profile (proposed)</td><td>Seeded profile/preference rows in PostgreSQL</td><td>4,000 unique sample IDs and summary preferences; identity mapping and genre crosswalk required; no current integration. AP9.</td></tr>
+            <tr><td>Demo listener profile</td><td>Read-only DuckDB view over the streaming-habits CSV</td><td>4,000 fixture IDs, validated unique at startup; versioned genre alias crosswalk; matched tracks become candidate rows. The browser-selected ID is not authenticated. AP9.</td></tr>
             <tr><td>User-event stream (proposed)</td><td>Kafka + Avro + schema registry</td><td>Outbox-backed, at-least-once changes for derived projections/analytics; not the login-time profile store.</td></tr>
             <tr><td>Conversation history and topic memory (proposed)</td><td>PostgreSQL <code>conversation_data</code> + pgvector on topic summaries only</td><td>Short-lived message rows; consolidate useful older topics; separate hard expiries for transcript and summary.</td></tr>
             <tr><td>Model telemetry (proposed)</td><td>OpenTelemetry + separate Avro Kafka topic</td><td>Operational latency/outcome metrics and sanitized invocation analytics; no prompts, completions, or account IDs.</td></tr>
@@ -849,18 +849,18 @@ conversation_data.memory_source(
             <span class="arrow"> · · · optional · · · </span><div class="node"><b>MusicBrainz DB</b><small>Operator supplied → optional recording Parquet</small></div>
           </div>
         </div>
-        <p>Catalog pipeline is batch ETL and manual/on-demand. No Kafka consumer, CDC, schedule, or vector embedding builder is wired to it. Kafka/Avro and the profile flow below are proposals, not implemented components. The separate streaming-habits CSV is not currently loaded, but is a candidate profile seed for the demo.</p>
+        <p>Catalog pipeline is batch ETL and manual/on-demand. No Kafka consumer, CDC, schedule, or vector embedding builder is wired to it. Kafka/Avro and durable user-profile storage are proposals. The local demo does load the separate streaming-habits CSV into a read-only DuckDB view; the file remains outside catalog ETL and is not treated as playback-event history.</p>
         <div class="diagram">
-          <p class="diagram-label">Proposed demo profile path · static seed, no Kafka required</p>
+          <p class="diagram-label">Implemented demo profile path · static seed, no Kafka required</p>
           <div class="flow">
             <div class="node"><b>Streaming-habits CSV</b><small>4,000 sample profiles; one top artist/genre</small></div><span class="arrow">→</span>
-            <div class="node"><b>Validate identity + crosswalk</b><small>Unique artist match; curated, versioned genre aliases</small></div><span class="arrow">→</span>
+            <div class="node"><b>Validate fixture ID + crosswalk</b><small>Unique artist match; version-1 curated genre aliases; surface unmatched/ambiguous labels</small></div><span class="arrow">→</span>
             <div class="node primary"><b>DuckDB seed view or profile table</b><small>Lookup by verified demo identity</small></div><span class="arrow">→</span>
             <div class="node"><b>Catalog join</b><small>artist → track_artists → tracks; genre → tracks</small></div>
           </div>
         </div>
-        <p>DuckDB can join loaded CSV/Parquet relations with catalog Parquet views; the relation need not be in one file or database. For read-only demo profiles, a DuckDB-loaded view is simplest. For editable persistent profiles, add PostgreSQL serving tables and let the API fetch only the authenticated user's fields. Keep profile tables outside the model-generated fallback allowlist.</p>
-        <p>For this 4,000-row static seed, DuckDB does not need a separate index; filtering the profile relation is enough. If profiles become persistent PostgreSQL rows, key them to the authenticated identity and use a primary key for fast lookup. The real join issue is identity quality: the 14 artist labels map uniquely after normalization, but genre labels collide across catalog IDs and some do not directly match track genres. Use a curated, versioned <code>profile_genre_alias(source_label, genre_id, mapping_version)</code> crosswalk; map to one or more deliberate genre IDs, then join through <code>tracks.genre_id</code> and/or <code>artist_genres</code> → <code>track_artists</code> → <code>tracks</code>. A top-artist preference joins through <code>track_artists</code> directly. Do not treat a CSV label as a foreign key.</p>
+        <p>The implemented read-only profile endpoint reads the static CSV view in DuckDB and returns one fixture row plus at most 40 catalog matches. It normalizes top-artist names and requires a unique artist match. Its version-1 genre crosswalk maps each of the 12 sample labels to one deliberate canonical genre name; the service checks that target against the active catalog snapshot and reports unmatched/ambiguous mappings. Artist matches join through <code>track_artists</code>; genre matches use <code>tracks.genre_id</code>. The matched rows become demo candidates, while top artist, top genre, and top mood are soft signals in recommendation/chat context. Other profile attributes are shown locally and are not sent to the model. The browser-selected ID is only a fixture selector, not authentication; production must bind a profile to a trusted principal and use owner-scoped persistent storage. Profile lookup is a named API route and is outside the model-generated SQL fallback allowlist.</p>
+        <p>For this 4,000-row static seed, DuckDB does not need a separate index; filtering the profile view is enough. If profiles become persistent PostgreSQL rows, key them to the authenticated identity and use a primary key for fast lookup. Do not treat a CSV label or a transform-generated integer ID as a stable cross-store foreign key.</p>
         <div class="diagram">
           <p class="diagram-label">Target user profile and event flow · not implemented</p>
           <div class="flow">
