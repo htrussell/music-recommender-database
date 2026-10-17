@@ -19,11 +19,12 @@ Run the Bash setup script from the repository root (Git Bash or WSL on Windows):
 bash ./setup.sh
 ```
 
-The script creates a local `.venv`, installs the Kaggle CLI and pandas, downloads
-the four Kaggle source datasets into `csv/`, transforms the source files into
-the eight relational CSVs under `transformed/`, starts PostgreSQL with Docker
-Compose, and runs the containerized database loader. It asks before loading
-because the loader drops and recreates the music tables.
+The script creates a local `.venv`, installs the Kaggle CLI and Parquet
+transformation dependencies, downloads the four Kaggle source datasets into
+`csv/`, transforms the source files into eight canonical Parquet tables under
+`transformed/`, starts PostgreSQL with Docker Compose, and runs the
+containerized database loader. It asks before loading because the loader drops
+and recreates the PostgreSQL backup tables.
 
 After setup completes, connect to the populated database with:
 
@@ -38,35 +39,66 @@ bash ./start.sh
 ```
 
 The launcher works on macOS, Linux, WSL, and Windows with Git Bash. It builds
-and starts the frontend, local AI API, DuckDB catalog service, Ollama, the
-required Ollama model, and PostgreSQL, waits for the web page to respond, then
-opens a browser where supported. The AI API waits until Ollama is healthy and
-model download completes. The first launch may take several minutes to
-download the model.
+and starts the frontend, AI API, DuckDB catalog service, Ollama for local
+embeddings, and PostgreSQL, waits for the web page to respond, then opens a
+browser where supported. The AI API waits until Ollama is healthy and the
+embedding model download completes. The first launch may take several minutes
+to download the embedding model.
 Docker Desktop/Engine, Docker Compose v2, and `curl` must be installed; the
 engine must be running. It does not download or populate the music dataset.
 
-The UI is served at <http://localhost:8080>. Goal recommendations use the
-`lfm2.5-thinking:latest` Ollama model; chat uses Liquid AI's 1.2B Instruct GGUF
-(`hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M`) to avoid a thinking model.
-Catalog-tool planning and PostgreSQL fallback SQL generation use
-`qwen2.5-coder:1.5b`. For catalog questions, the API asks the SQL model to
-select a bounded catalog tool.
+The UI is served at <http://localhost:8080>. Catalog-backed recommendations
+use the `llama` model key on the Cloudflare Worker at
+`https://music-rec-ai.htrussell.workers.dev`; chat and catalog/SQL planning use
+the `glm` model key. If a model returns no message content or invalid JSON, the
+API retries with the other configured model.
+Direct Prompt Mode uses `llama` to generate tracks. Playlist-grounded
+recommendations use the imported playlist as taste context, exclude its tracks
+from new queues, and skip a redundant catalog-planning call;
+other catalog-backed requests continue to use DuckDB. Direct Prompt Mode
+verifies titles and artist credits against the local catalog using exact matches
+or lenient fuzzy title/artist similarity, and makes up to two additional
+discovery passes to fill a short playlist. It prefers matching artist credits
+but can select the closest title candidate when the model returns a mismatched
+artist or several plausible matches; occasional catalog mismatches are possible.
+Tracks already in an imported playlist and tracks recommended previously in the
+browser session are excluded from new queues.
+It never exceeds the requested duration. A partial queue is retained if a refill
+request fails or the catalog has too few matching tracks.
+The API sets task-specific output-token limits to constrain generated response
+size. Set `CLOUDFLARE_WORKER_URL` in the shell or Compose `.env` file to
+override the Worker endpoint. `nomic-embed-text:v1.5` remains configured as the
+local Ollama embedding model. For catalog questions, the API asks the Worker's
+SQL model to select a bounded catalog tool.
 Track search, album search, and genre comparisons run as parameterized queries
-against DuckDB, which loads the transformed CSV tables from `transformed/` at
-startup. If the model selects an unsupported catalog operation, or DuckDB is
-unavailable, the API can fall back to its existing read-only PostgreSQL query
-path. PostgreSQL fallback SQL is still validated against the music-table
-allowlist and row limit and runs using the `music_reader` role.
+against DuckDB, which queries the transformed Parquet files from
+`transformed/` at startup without copying the catalog into DuckDB tables.
+PostgreSQL is a separately loaded relational backup/query fallback, derived
+from those same Parquet files. Prompts, approved profile details, and relevant
+catalog rows are sent to the Cloudflare Worker for model processing. If the
+model selects an unsupported catalog operation, or DuckDB is unavailable, the
+API can fall back to its existing read-only PostgreSQL query path. PostgreSQL
+fallback SQL is still validated against the music-table allowlist and row limit
+and runs using the `music_reader` role.
 `MUSIC_READER_PASSWORD` can be set in the shell or a Compose `.env` file to
 override the local-development default.
 
 Playlist and taste-profile review/save remain browser-session data. A listener
-profile is not written into the music database. Public YouTube playlist links
-are imported by the local backend using `yt-dlp`; no third-party API key is
-required in the frontend. The AI can match alternate title spellings and
-YouTube title variations against the read-only music catalog. Normalized JSON
-playlist files can also be imported.
+profile is not written into the music database. Chat-inferred preferences stay
+as suggestions until the listener confirms each one; only confirmed
+preferences can influence recommendations or be saved in the browser session.
+The demo can load one of the 4,000 sample profiles in
+`csv/music_streaming_habits_2026.csv` by listener ID. DuckDB reads that file as
+a separate, read-only profile view and adds up to 40 catalog tracks matched by
+top artist and curated top-genre aliases to the candidate pool. Only top artist,
+top genre, and top mood are sent to the model; other sample attributes are shown
+locally. These synthetic fixture IDs are not authenticated users or streaming
+event history. The selected ID is retained only when the listener saves the
+browser-session profile.
+Public YouTube playlist links are imported by the local backend using `yt-dlp`;
+no third-party API key is required in the frontend. The AI can match alternate
+title spellings and YouTube title variations against the read-only music
+catalog. Normalized JSON playlist files can also be imported.
 
 Before running it, install Python 3.10+, Docker Desktop with Compose v2, and
 configure Kaggle API credentials either as `KAGGLE_USERNAME` / `KAGGLE_KEY`
@@ -74,10 +106,21 @@ environment variables or in `~/.kaggle/kaggle.json`. To reuse source CSV files
 already present in `csv/`, run `bash ./setup.sh --skip-download`. Add `--yes` to
 confirm database replacement non-interactively.
 
-The separate `scripts/csv_to_parquet_hdfs.py` script is not run by this setup:
-it exports the transformed tables to HDFS and expects a reachable
-`namenode:9000`. DuckDB currently loads the transformed CSV files directly;
-using Parquet for its catalog inputs can be a later storage optimization.
-Kafka is already in Compose, and Avro could be used for versioned
-listener-feedback events if/when a schema registry and consumer are added.
-Avro streaming should not replace Parquet for analytical catalog storage.
+`transform_erd.py` writes Zstandard-compressed Parquet as the canonical
+transformed catalog. The original Kaggle downloads remain CSV source files.
+The PostgreSQL loader streams Parquet data in bounded batches, while DuckDB
+reads those files directly. The optional
+`scripts/export_musicbrainz_parquet.py` exports a compact recording/title/
+artist-credit index from a separately imported MusicBrainz PostgreSQL database
+to `musicbrainz/recordings.parquet`; it does not download or import the
+MusicBrainz database. Set `MUSICBRAINZ_DSN` when running the exporter. The
+export orders rows by normalized title so DuckDB can prune Parquet row groups
+for exact-title lookups. The DuckDB verifier uses this index when present,
+favoring exact artist credits and omitting ambiguous or unknown title matches.
+
+The legacy `scripts/csv_to_parquet_hdfs.py` remains an optional HDFS export
+path, reads the canonical Parquet tables, and expects a reachable
+`namenode:9000`. Kafka is already in Compose, and Avro could be used for
+versioned listener-feedback events if/when a schema registry and consumer are
+added. Avro streaming should not replace Parquet for analytical catalog
+storage.

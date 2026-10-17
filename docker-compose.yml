@@ -20,10 +20,12 @@ services:
       context: ./backend
     container_name: music-recommender-ai-api
     environment:
+      CLOUDFLARE_WORKER_URL: ${CLOUDFLARE_WORKER_URL:-https://music-rec-ai.htrussell.workers.dev}
+      CLOUDFLARE_RECOMMENDATION_MODEL: llama
+      CLOUDFLARE_CHAT_MODEL: glm
+      CLOUDFLARE_SQL_MODEL: glm
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: lfm2.5-thinking:latest
-      OLLAMA_CHAT_MODEL: hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M
-      OLLAMA_SQL_MODEL: qwen2.5-coder:1.5b
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text:v1.5
       DUCKDB_URL: http://duckdb:8001
       MUSIC_ADMIN_DSN: dbname=track-db user=airflow password=airflow host=postgres port=5432
       MUSIC_READER_PASSWORD: ${MUSIC_READER_PASSWORD:-music_reader_local_dev}
@@ -54,8 +56,12 @@ services:
     command: ["uvicorn", "duckdb_service:app", "--host", "0.0.0.0", "--port", "8001"]
     environment:
       MUSIC_DATA_DIR: /data/transformed
+      MUSICBRAINZ_PARQUET: /data/musicbrainz/recordings.parquet
+      DEMO_PROFILE_CSV: /data/source/music_streaming_habits_2026.csv
     volumes:
       - ./transformed:/data/transformed:ro
+      - ./musicbrainz:/data/musicbrainz:ro
+      - ./csv/music_streaming_habits_2026.csv:/data/source/music_streaming_habits_2026.csv:ro
     networks:
       - music-network
     healthcheck:
@@ -282,10 +288,14 @@ services:
   ollama-model:
     image: ollama/ollama:latest
     entrypoint: ["/bin/sh", "-c"]
-    command: >-
-      ollama pull lfm2.5-thinking:latest &&
-      ollama pull hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M &&
-      ollama pull qwen2.5-coder:1.5b
+    command:
+      - |
+        # Text generation uses the Cloudflare Worker; keep Ollama pulls commented
+        # for reference. Ollama remains here only for the local embedding model.
+        # ollama pull lfm2.5-thinking:latest
+        # ollama pull qwen3:0.6b
+        # ollama pull qwen2.5-coder:1.5b
+        ollama pull nomic-embed-text:v1.5
     environment:
       OLLAMA_HOST: http://ollama:11434
     restart: "no"

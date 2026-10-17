@@ -1,7 +1,10 @@
 data/*.csv
 transformed/*.csv
+transformed/*.parquet
+musicbrainz/*.parquet
 csv/*.csv
 csv/Review excerpts for NLP/
+reports/guide/
 .DS_Store
 .DS_Store?
 ._*

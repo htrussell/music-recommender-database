@@ -6,8 +6,10 @@
         let NORMALIZED_PLAYLIST = null;
         let PENDING_PLAYLIST = null;
         let CHAT_HISTORY = [];
-        let CHAT_TASTE_INSIGHTS = [];
+        let CONFIRMED_TASTE_INSIGHTS = [];
+        let PENDING_TASTE_INSIGHTS = [];
         let LAST_RECOMMENDATION_DATA = null;
+        let DEMO_PROFILE = null;
 
         function escapeHtml(value) {
             return String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -48,28 +50,25 @@
             1: {
                 goal: "Find new indie and alternative music with atmospheric guitars and thoughtful lyrics, similar to my playlist, under 30 minutes.",
                 budget: 30,
-                exclusions: "country, holiday music",
-                history: false
+                exclusions: "country, holiday music"
             },
             2: {
                 goal: "Build a calm focus queue of ambient, downtempo, and instrumental electronic music similar to my playlist, under 30 minutes.",
                 budget: 30,
-                exclusions: "vocals, heavy metal",
-                history: false
+                exclusions: "vocals, heavy metal"
             },
             3: {
                 goal: "I'm looking for a playlist with some content outside my recommendations. Can you recommend music similar to \"Danse Macabre\"?",
                 budget: 30,
-                exclusions: "",
-                history: false
+                exclusions: ""
             }
         };
 
         // Initialize UI on load
-        window.onload = function() {
+        window.onload = async function() {
             renderCatalogTable();
             setupCharCounter();
-            loadSavedListenerProfile();
+            await loadSavedListenerProfile();
             document.getElementById("listenerConsentCheck").addEventListener("change", event => {
                 if (event.target.checked) {
                     try {
@@ -180,7 +179,6 @@
             document.getElementById("goalTextInput").value = scenario.goal;
             document.getElementById("budgetInput").value = scenario.budget;
             document.getElementById("exclusionsInput").value = scenario.exclusions;
-            document.getElementById("includeHistoryCheck").checked = scenario.history;
             document.getElementById("charCounter").textContent = `${scenario.goal.length} / 500`;
             showToast(`Loaded Preset Scenario ${num}`, "info");
         }
@@ -368,6 +366,7 @@
                 id: `playlist:${track.id}`,
                 tags: [...track.tags, "playlist-seed", "taste-signal"]
             }));
+            appendDemoProfileTracks();
             document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} playlist tracks available as candidates`;
             renderPlaylistHistory();
             renderCatalogTable();
@@ -457,9 +456,10 @@
             try {
                 const profile = {
                     playlist: NORMALIZED_PLAYLIST,
+                    demoProfileId: DEMO_PROFILE?.profile.listener_id ?? null,
                     tasteSummary: document.getElementById("listenerTasteSummary").value.trim(),
                     explicitPreferences: document.getElementById("listenerExplicitPreferences").value.trim(),
-                    learnedPreferences: CHAT_TASTE_INSIGHTS
+                    confirmedLearnedPreferences: CONFIRMED_TASTE_INSIGHTS
                 };
                 sessionStorage.setItem("goalModeListenerProfile", JSON.stringify(profile));
                 document.getElementById("profileSaveStatus").textContent = "Saved in this session";
@@ -469,7 +469,7 @@
             }
         }
 
-        function loadSavedListenerProfile() {
+        async function loadSavedListenerProfile() {
             try {
                 if (sessionStorage.getItem("goalModeListenerConsent") !== "true") return;
                 const saved = sessionStorage.getItem("goalModeListenerProfile");
@@ -478,15 +478,32 @@
                 document.getElementById("listenerConsentCheck").checked = true;
                 document.getElementById("listenerTasteSummary").value = profile.tasteSummary || "";
                 document.getElementById("listenerExplicitPreferences").value = profile.explicitPreferences || "";
-                CHAT_TASTE_INSIGHTS = Array.isArray(profile.learnedPreferences) ? profile.learnedPreferences : [];
+                const hasConfirmedPreferences = Array.isArray(profile.confirmedLearnedPreferences);
+                CONFIRMED_TASTE_INSIGHTS = hasConfirmedPreferences
+                    ? profile.confirmedLearnedPreferences.filter(insight => typeof insight === "string" && insight.trim())
+                    : [];
+                PENDING_TASTE_INSIGHTS = hasConfirmedPreferences
+                    ? []
+                    : Array.isArray(profile.learnedPreferences)
+                        ? profile.learnedPreferences.filter(insight => typeof insight === "string" && insight.trim())
+                        : [];
+                if (!hasConfirmedPreferences && Object.prototype.hasOwnProperty.call(profile, "learnedPreferences")) {
+                    delete profile.learnedPreferences;
+                    profile.confirmedLearnedPreferences = [];
+                    sessionStorage.setItem("goalModeListenerProfile", JSON.stringify(profile));
+                }
                 if (profile.playlist?.tracks?.length) {
                     NORMALIZED_PLAYLIST = profile.playlist;
                     PENDING_PLAYLIST = JSON.parse(JSON.stringify(profile.playlist));
                     setPlaylistReview(PENDING_PLAYLIST);
                     confirmPlaylistReview();
                 }
+                if (Number.isInteger(profile.demoProfileId) && profile.demoProfileId > 0) {
+                    await loadDemoProfileById(profile.demoProfileId);
+                }
                 document.getElementById("profileSaveStatus").textContent = "Restored for this session";
                 renderLearnedTasteNotes();
+                renderPendingTasteInsights();
             } catch (err) {
                 showToast(`Could not restore listener profile: ${err.message}`, "error");
             }
@@ -514,12 +531,19 @@
             CATALOG_ITEMS = [];
             playlistVideoIds = new Set();
             playlistPreferenceSummary = "";
-            CHAT_TASTE_INSIGHTS = [];
+            CONFIRMED_TASTE_INSIGHTS = [];
+            PENDING_TASTE_INSIGHTS = [];
+            DEMO_PROFILE = null;
             CHAT_HISTORY = [];
             LAST_RECOMMENDATION_DATA = null;
+            document.getElementById("demoProfileDetails").classList.add("hidden");
+            document.getElementById("clearDemoProfileBtn").classList.add("hidden");
+            document.getElementById("demoProfileStatus").textContent = "No sample profile loaded.";
+            document.getElementById("demoProfileIdInput").value = "1";
             renderPlaylistHistory();
             renderCatalogTable();
             renderLearnedTasteNotes();
+            renderPendingTasteInsights();
             refreshChatContextDisplay();
             if (!skipConfirm) showToast("Cleared listener data for this browser session.", "success");
         }
@@ -553,7 +577,11 @@
                 const duration = Number.isFinite(durationMs) && durationMs > 0
                     ? Math.max(1, Math.ceil(durationMs / 60000))
                     : 4;
+                const profileSources = Array.isArray(row.profile_match) ? row.profile_match : [];
                 const tags = ["music-catalog"];
+                if (profileSources.length) {
+                    tags.push("demo-profile-seed", ...profileSources.map(source => `profile-${source}`));
+                }
                 for (const field of ["genre", "energy", "valence", "danceability", "acousticness", "instrumentalness", "tempo"]) {
                     const value = row[field];
                     if (value !== undefined && value !== null && value !== "") tags.push(`${field}:${value}`);
@@ -579,11 +607,154 @@
             }
         }
 
-        async function requestOllamaJson(systemInstruction, userContent, task = "recommendation") {
+        function appendDemoProfileTracks() {
+            if (!DEMO_PROFILE?.tracks?.length) return;
+            mergeDatabaseCatalogRows(DEMO_PROFILE.tracks);
+        }
+
+        function formatDemoProfileValue(value) {
+            if (typeof value === "boolean") return value ? "Yes" : "No";
+            if (value === null || value === undefined || value === "") return "Not provided";
+            return String(value);
+        }
+
+        function renderDemoProfile() {
+            const details = document.getElementById("demoProfileDetails");
+            const clearButton = document.getElementById("clearDemoProfileBtn");
+            const status = document.getElementById("demoProfileStatus");
+            if (!DEMO_PROFILE) {
+                details.classList.add("hidden");
+                clearButton.classList.add("hidden");
+                status.textContent = "No sample profile loaded.";
+                return;
+            }
+            const profile = DEMO_PROFILE.profile;
+            const rows = [
+                ["Top artist", profile.top_artist],
+                ["Top genre", profile.top_genre],
+                ["Top mood", profile.top_mood],
+                ["Platform", profile.platform],
+                ["Subscription", profile.subscription],
+                ["Country", profile.country],
+                ["Age", profile.age],
+                ["Daily listening", `${profile.daily_listening_minutes} min`],
+                ["Songs per day", profile.songs_per_day],
+                ["Skip rate", `${profile.skip_rate_pct}%`],
+                ["Playlists", profile.playlists_count],
+                ["Discover Weekly", profile.discover_weekly_user],
+                ["Offline mode", profile.uses_offline_mode],
+                ["Podcasts too", profile.podcasts_too]
+            ];
+            details.innerHTML = rows.map(([label, value]) => `
+                <div class="min-w-0"><span class="block text-slate-500">${escapeHtml(label)}</span>
+                    <span class="block truncate text-slate-200">${escapeHtml(formatDemoProfileValue(value))}</span></div>
+            `).join("");
+            details.classList.remove("hidden");
+            clearButton.classList.remove("hidden");
+            const artistStatus = DEMO_PROFILE.artist_mapping_status;
+            const genreStatus = DEMO_PROFILE.genre_mapping_status;
+            const mappedGenre = DEMO_PROFILE.matched_genre?.genre_name;
+            status.textContent = `Loaded sample #${profile.listener_id}. Artist: ${artistStatus}; genre: ${genreStatus}${mappedGenre ? ` (${mappedGenre})` : ""}. ${DEMO_PROFILE.tracks.length} catalog matches added as candidates.`;
+            status.className = "text-[10px] text-emerald-300";
+        }
+
+        async function loadDemoProfile() {
+            if (!hasListenerConsent()) return;
+            const listenerId = Number(document.getElementById("demoProfileIdInput").value);
+            if (!Number.isInteger(listenerId) || listenerId < 1 || listenerId > 4000) {
+                showToast("Enter a demo listener ID from 1 to 4,000.", "warning");
+                return;
+            }
+            await loadDemoProfileById(listenerId);
+        }
+
+        async function loadDemoProfileById(listenerId) {
+            const button = document.getElementById("loadDemoProfileBtn");
+            const status = document.getElementById("demoProfileStatus");
+            button.disabled = true;
+            button.classList.add("opacity-50", "cursor-not-allowed");
+            status.textContent = `Loading demo listener #${listenerId} and matching catalog tracks...`;
+            status.className = "text-[10px] text-blue-300";
+            try {
+                const response = await fetch(`/api/demo-profile/${listenerId}`);
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || `Demo profile HTTP ${response.status}`);
+                if (
+                    !data.profile || data.profile.listener_id !== listenerId ||
+                    !Array.isArray(data.tracks) ||
+                    typeof data.profile.top_artist !== "string" ||
+                    typeof data.profile.top_genre !== "string" ||
+                    typeof data.profile.top_mood !== "string" ||
+                    !["matched", "unmatched", "ambiguous"].includes(data.artist_mapping_status) ||
+                    !["matched", "unmatched", "ambiguous"].includes(data.genre_mapping_status) ||
+                    data.tracks.some(track =>
+                        !track ||
+                        (typeof track.catalog_track_id !== "string" && typeof track.catalog_track_id !== "number") ||
+                        typeof track.title !== "string" ||
+                        typeof track.artist !== "string" ||
+                        !Array.isArray(track.profile_match) ||
+                        track.profile_match.some(source => !["top_artist", "top_genre"].includes(source))
+                    )
+                ) {
+                    throw new Error("The local service returned an invalid demo profile.");
+                }
+                CATALOG_ITEMS = CATALOG_ITEMS.filter(item => !item.tags.includes("demo-profile-seed"));
+                DEMO_PROFILE = data;
+                appendDemoProfileTracks();
+                document.getElementById("demoProfileIdInput").value = String(listenerId);
+                renderDemoProfile();
+                renderCatalogTable();
+                refreshChatContextDisplay();
+            } catch (err) {
+                status.textContent = `Could not load demo profile: ${err.message}`;
+                status.className = "text-[10px] text-red-300";
+                showToast(`Could not load demo profile: ${err.message}`, "error");
+            } finally {
+                button.disabled = false;
+                button.classList.remove("opacity-50", "cursor-not-allowed");
+            }
+        }
+
+        function clearDemoProfile() {
+            DEMO_PROFILE = null;
+            CATALOG_ITEMS = CATALOG_ITEMS.filter(item => !item.tags.includes("demo-profile-seed"));
+            try {
+                const saved = sessionStorage.getItem("goalModeListenerProfile");
+                if (saved) {
+                    const profile = JSON.parse(saved);
+                    profile.demoProfileId = null;
+                    sessionStorage.setItem("goalModeListenerProfile", JSON.stringify(profile));
+                }
+            } catch (err) {
+                showToast(`Could not clear the saved demo profile selection: ${err.message}`, "error");
+            }
+            renderDemoProfile();
+            renderCatalogTable();
+            refreshChatContextDisplay();
+        }
+
+        function getDemoTasteContext() {
+            if (!DEMO_PROFILE?.profile) return "None";
+            const profile = DEMO_PROFILE.profile;
+            return [
+                `Top artist: ${profile.top_artist}`,
+                `Top genre: ${profile.top_genre}`,
+                `Top mood: ${profile.top_mood}`
+            ].join("; ");
+        }
+
+        function getDemoCatalogContext() {
+            if (!DEMO_PROFILE?.tracks?.length) return "None";
+            return DEMO_PROFILE.tracks.slice(0, 12)
+                .map(track => `${track.title} — ${track.artist} (${track.genre || "genre unavailable"}; ${track.profile_match.join(", ")})`)
+                .join("\n");
+        }
+
+        async function requestAiJson(systemInstruction, userContent, task = "recommendation", skipCatalog = false) {
             const response = await fetch("/api/ai/json", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ systemInstruction, userContent, task })
+                body: JSON.stringify({ systemInstruction, userContent, task, skipCatalog })
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail || `Local recommendation service HTTP ${response.status}`);
@@ -616,7 +787,53 @@
             return normalized;
         }
 
-        async function fetchExternalDiscoveryTracks({ goalText, budgetMins, preferredTopics, excludedTopics, existingIds }) {
+        function trackIdentityKey(track) {
+            if (!track || typeof track.title !== "string" || typeof track.artist !== "string") return "";
+            return normalizeSongKey(`${track.artist} ${track.title}`);
+        }
+
+        function getRecommendationExclusions(ids = []) {
+            const excludedIds = new Set(ids.map(id => String(id)));
+            PLAYLIST_ITEMS.forEach(track => excludedIds.add(`playlist:${track.id}`));
+            const knownTracks = [
+                ...PLAYLIST_ITEMS,
+                ...CATALOG_ITEMS.filter(track => excludedIds.has(String(track.id)))
+            ];
+            const excludedIdentities = new Set(knownTracks.map(trackIdentityKey).filter(Boolean));
+            return { ids: excludedIds, identities: excludedIdentities };
+        }
+
+        function filterExcludedRecommendations(recommendations, exclusions) {
+            const seenIds = new Set();
+            const seenIdentities = new Set();
+            return recommendations.filter(recommendation => {
+                const id = String(recommendation.content_id);
+                const item = CATALOG_ITEMS.find(candidate => String(candidate.id) === id);
+                const identity = item ? trackIdentityKey(item) : "";
+                if (
+                    exclusions.ids.has(id) ||
+                    (identity && exclusions.identities.has(identity)) ||
+                    seenIds.has(id) ||
+                    (identity && seenIdentities.has(identity))
+                ) {
+                    return false;
+                }
+                seenIds.add(id);
+                if (identity) seenIdentities.add(identity);
+                return true;
+            });
+        }
+
+        async function fetchExternalDiscoveryTracks({
+            goalText,
+            budgetMins,
+            preferredTopics,
+            excludedTopics,
+            existingIds,
+            currentTracks = [],
+            listenerContext = "",
+            task = "discovery"
+        }) {
             const systemPrompt = `You are the Goal Mode AI Music Discovery Engine.
 The listener has requested music based on a specific prompt, franchise, soundtrack, or artist: "${goalText}".
 
@@ -629,7 +846,9 @@ STRICT MANDATORY RULES:
 2. ZERO OFF-TOPIC TRACKS: Do NOT pad with unrelated music. Every single item must be 100% genuine and relevant to "${goalText}".
 3. STRICT EXCLUSIONS: Under NO circumstances include any artist, title, or genre matching EXCLUDED TOPICS: ${JSON.stringify(excludedTopics)}.
 4. REAL DURATIONS: Provide realistic durations (typically 3 to 5 minutes each).
-5. TARGET Duration Range: Return enough authentic tracks to reach approximately ${budgetMins} minutes without exceeding it (typically ${Math.max(3, Math.floor(budgetMins / 4))} tracks).
+5. TARGET Duration Range: Return additional authentic tracks totaling as close as possible to ${budgetMins} minutes without exceeding it (typically ${Math.max(3, Math.ceil(budgetMins / 4))} tracks). A later pass may request fewer minutes to fill a verified shortfall.
+6. OUTPUT SIZE: Return only the tracks needed to approach the requested duration; do not add commentary outside the JSON object.
+7. DO NOT REPEAT tracks already selected for this playlist: ${JSON.stringify(currentTracks)}.
 
 Return ONLY a JSON object matching this schema:
 {
@@ -651,30 +870,78 @@ Target Duration: ${budgetMins} minutes
 Preferred Topics: ${JSON.stringify(preferredTopics)}
 Explicit Excluded Topics: ${JSON.stringify(excludedTopics)}
 Previously Recommended / Existing IDs to avoid: ${JSON.stringify((existingIds || []).slice(0, 50))}
+Already selected tracks to avoid: ${JSON.stringify(currentTracks)}
+${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
 `;
 
             try {
-                const result = await requestOllamaJson(systemPrompt, userPrompt);
+                const exclusions = getRecommendationExclusions(existingIds || []);
+                (currentTracks || []).forEach(trackName => {
+                    const identity = typeof trackName === "string"
+                        ? normalizeSongKey(trackName)
+                        : trackIdentityKey(trackName);
+                    if (identity) exclusions.identities.add(identity);
+                });
+                const result = await requestAiJson(systemPrompt, userPrompt, task);
                 if (!Array.isArray(result.tracks)) {
-                    throw new Error("Ollama's discovery response did not include a tracks array.");
+                    throw new Error("AI discovery response did not include a tracks array.");
                 }
-                
-                return result.tracks.map(track => {
-                    const id = `discovered:${normalizeSongKey(track.artist + " " + track.title)}`;
-                    const durationMins = Math.min(25, Math.max(1, parseInt(track.duration_minutes) || 4));
+                if (result.tracks.some(track =>
+                    !track ||
+                    typeof track !== "object" ||
+                    typeof track.title !== "string" ||
+                    typeof track.artist !== "string"
+                )) {
+                    throw new Error("AI discovery response included an invalid track.");
+                }
 
-                    return {
-                        id: id,
-                        title: track.title,
-                        artist: track.artist,
-                        category: "Music",
-                        duration: durationMins,
-                        durationSeconds: durationMins * 60,
-                        cover: "",
-                        tags: ["outside-discovery", "prompt-curated", ...(track.tags || [])],
-                        reason: track.reason,
-                        isDiscoveredMatch: true
-                    };
+                const verificationResponse = await fetch("/api/catalog/verify-tracks", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        tracks: result.tracks.map(track => ({
+                            title: track.title,
+                            artist: track.artist
+                        }))
+                    })
+                });
+                const verificationData = await verificationResponse.json();
+                if (!verificationResponse.ok) {
+                    throw new Error(verificationData.detail || `Track verification failed with HTTP ${verificationResponse.status}.`);
+                }
+                if (!Array.isArray(verificationData.tracks)) {
+                    throw new Error("Track verification returned an invalid response.");
+                }
+
+                mergeDatabaseCatalogRows(verificationData.tracks);
+                const seenIds = new Set();
+                const seenIdentities = new Set();
+                return verificationData.tracks.flatMap(verifiedTrack => {
+                    const id = `db:${verifiedTrack.catalog_track_id}`;
+                    const item = CATALOG_ITEMS.find(candidate => candidate.id === id);
+                    if (!item) {
+                        throw new Error("A catalog-verified track could not be loaded into the candidate catalog.");
+                    }
+                    const identity = trackIdentityKey(item);
+                    if (
+                        exclusions.ids.has(id) ||
+                        exclusions.ids.has(String(verifiedTrack.catalog_track_id)) ||
+                        (identity && exclusions.identities.has(identity)) ||
+                        seenIds.has(id) ||
+                        (identity && seenIdentities.has(identity))
+                    ) {
+                        return [];
+                    }
+                    seenIds.add(id);
+                    if (identity) seenIdentities.add(identity);
+                    item.tags = [...new Set([...item.tags, "outside-discovery", "prompt-curated"])];
+                    item.isDiscoveredMatch = true;
+                    return [{
+                        ...item,
+                        reason: verifiedTrack.artist_corrected
+                            ? `Catalog verified this title and corrected its artist to ${verifiedTrack.artist}.`
+                            : `Catalog verified this title and artist as a match for "${goalText}".`
+                    }];
                 });
             } catch (err) {
                 console.error("Failed to query external discovery tracks:", err);
@@ -716,20 +983,38 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
 `;
 
             try {
-                const result = await requestOllamaJson(systemPrompt, userPrompt);
+                const result = await requestAiJson(systemPrompt, userPrompt, "discovery");
                 if (!Array.isArray(result.tracks)) {
-                    throw new Error("Ollama's budget response did not include a tracks array.");
+                    throw new Error("AI budget response did not include a tracks array.");
+                }
+                if (result.tracks.some(track =>
+                    !track ||
+                    typeof track !== "object" ||
+                    typeof track.title !== "string" ||
+                    typeof track.artist !== "string"
+                )) {
+                    throw new Error("AI budget response included an invalid track.");
                 }
                 
                 let accumulatedMinutes = 0;
                 const fillerTracks = [];
+                const exclusions = getRecommendationExclusions(existingIds || []);
+                (currentTracks || []).forEach(trackName => {
+                    const identity = typeof trackName === "string"
+                        ? normalizeSongKey(trackName)
+                        : trackIdentityKey(trackName);
+                    if (identity) exclusions.identities.add(identity);
+                });
 
                 for (const track of result.tracks) {
                     const dur = Math.min(20, Math.max(1, parseInt(track.duration_minutes) || 4));
-                    if (accumulatedMinutes + dur > remainingBudget && fillerTracks.length > 0) continue;
-                    accumulatedMinutes += dur;
-
+                    const identity = trackIdentityKey(track);
+                    if (!identity || exclusions.identities.has(identity) || accumulatedMinutes + dur > remainingBudget) continue;
                     const id = `filler:${normalizeSongKey(track.artist + " " + track.title)}`;
+                    if (exclusions.ids.has(id)) continue;
+                    exclusions.identities.add(identity);
+                    exclusions.ids.add(id);
+                    accumulatedMinutes += dur;
                     fillerTracks.push({
                         id: id,
                         title: track.title,
@@ -782,7 +1067,7 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                     renderCatalogTable();
                     showToast(`Loaded ${discovered.length} songs for "${goalText}" into candidate catalog!`, "success");
                 } else {
-                    showToast("Ollama did not find any new matching tracks.", "warning");
+                    showToast("AI did not find any new matching tracks.", "warning");
                 }
             } catch (err) {
                 showToast(`Could not load tracks from the local AI service: ${err.message}`, "error");
@@ -796,7 +1081,6 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
             const explicitExclusions = document.getElementById("exclusionsInput").value.trim();
             const listenerTasteSummary = document.getElementById("listenerTasteSummary").value.trim();
             const listenerPreferences = document.getElementById("listenerExplicitPreferences").value.trim();
-            const includeHistory = document.getElementById("includeHistoryCheck").checked;
             const previouslyRecommendedIds = getPreviouslyRecommendedIds();
             playlistPreferenceSummary = listenerTasteSummary || playlistPreferenceSummary;
 
@@ -808,19 +1092,27 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
 
             setLoading(true);
 
-            // Determine operation mode: Playlist-grounded vs Direct Prompt Mode
-            const isPlaylistGrounded = CATALOG_ITEMS.length > 0;
+            // Only an imported seed playlist selects playlist-grounded mode.
+            const isPlaylistGrounded = PLAYLIST_ITEMS.length > 0;
 
             if (!isPlaylistGrounded) {
                 document.getElementById("loadingStateTitle").textContent = "Direct Prompt Mode: Curating authentic tracks for your goal...";
-                document.getElementById("loadingStateSubtitle").textContent = "Enforcing negative exclusions & Duration Range";
+                document.getElementById("loadingStateSubtitle").textContent = "Generating, verifying, and filling matching tracks";
             } else {
                 document.getElementById("loadingStateTitle").textContent = "Parsing goal & evaluating candidate pool...";
                 document.getElementById("loadingStateSubtitle").textContent = "Enforcing budget constraints & topic exclusions";
             }
 
             const exclusionTokens = explicitExclusions.toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
+            const recommendationExclusions = getRecommendationExclusions(previouslyRecommendedIds);
             let eligibleCandidates = CATALOG_ITEMS.filter(item => {
+                const identity = trackIdentityKey(item);
+                if (
+                    recommendationExclusions.ids.has(String(item.id)) ||
+                    (identity && recommendationExclusions.identities.has(identity))
+                ) {
+                    return false;
+                }
                 if (!exclusionTokens.length) return true;
                 const searchText = `${item.title} ${item.artist} ${item.tags.join(" ")}`.toLowerCase();
                 return !exclusionTokens.some(ex => searchText.includes(ex));
@@ -830,22 +1122,25 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
 
             const compactCatalogPrompt = eligibleCandidates.length 
                 ? eligibleCandidates.map(c => `ID: "${c.id}" | ${c.title} - ${c.artist} | ${c.duration}m | Tags: ${c.tags.slice(0, 3).join(", ")}`).join("\n")
-                : "None available (Direct Prompt Mode active)";
+                : "No eligible new candidates are available; discover new tracks instead of reusing excluded songs.";
 
-            const chatInsightsText = CHAT_TASTE_INSIGHTS.length 
-                ? `\nLEARNED PREFERENCES FROM CONVERSATIONAL AI CHAT:\n${CHAT_TASTE_INSIGHTS.map(t => `- ${t}`).join("\n")}`
+            const chatInsightsText = CONFIRMED_TASTE_INSIGHTS.length
+                ? `\nLISTENER-CONFIRMED PREFERENCES FROM CONVERSATIONAL AI CHAT:\n${CONFIRMED_TASTE_INSIGHTS.map(t => `- ${t}`).join("\n")}`
                 : "None recorded yet";
+            const demoTasteContext = getDemoTasteContext();
+            const demoCatalogContext = getDemoCatalogContext();
 
             const systemPrompt = `You are the Goal Mode AI Recommendation Engine.
 Your job is to parse listener goals, evaluate candidate suitability from the candidate catalog (if available), and assemble the optimal audio queue.
 
 CRITICAL 100% RELEVANCE & ZERO IRRELEVANT FILLER RULES:
 1. 100% THEMATIC RELEVANCE ONLY: Only select candidate items if they GENUINELY, DIRECTLY, and AUTHENTICALLY match the listener's specific goal (e.g. if the user asks for "songs from the monogatari series", ONLY select songs that actually belong to the Monogatari series; NEVER select unrelated indie, pop, or rock songs).
-2. CONVERSATIONAL TASTE INTEGRATION: Actively honor and incorporate the listener's learned preferences and critiques discovered in recent AI Taste Chat discussions.
+2. CONVERSATIONAL TASTE INTEGRATION: Actively honor and incorporate only listener-confirmed preferences from AI Taste Chat.
 2a. LISTENER PROFILE: Incorporate the listener-approved taste summary and explicit preferences when choosing tracks.
+2b. DEMO PROFILE: Treat the loaded sample's top artist, top genre, and top mood as soft taste signals; the current goal and explicit exclusions take priority.
 3. ZERO UNRELATED BACKFILLING: If the candidate catalog only has 1 or 2 songs that genuinely match, select ONLY those matching songs. NEVER force-fit unrelated catalog songs just to fill the budget!
 4. PROMPT-DRIVEN EXPANSION: If no candidates exist, or if the user's prompt requests a specific franchise, soundtrack, artist, or style that is NOT fully populated in the candidate catalog, or if qualified candidates cannot fill at least 80% of the ${budgetMins}-minute budget, set "needs_external_discovery": true and "status": "needs_prompt_expansion".
-5. STRICT EXCLUSIONS: Under no circumstances select any item matching EXPLICIT EXCLUSIONS.
+5. STRICT EXCLUSIONS: Under no circumstances select any item matching EXPLICIT EXCLUSIONS or the imported playlist / previously recommended tracks listed below.
 6. GOAL PRIORITY: Override historical preferences when they conflict with the user's goal.
 
 Return valid JSON strictly matching schema:
@@ -868,8 +1163,10 @@ Budget: ${budgetMins} minutes
 Explicit Exclusions: "${explicitExclusions}"
 Listener-Approved Taste Summary: "${listenerTasteSummary || "None"}"
 Listener-Provided Preferences: "${listenerPreferences || "None"}"
-Listener Preference History: ${includeHistory ? "Heavy listener of Fiction podcasts (80% past history)" : "None"}
+Loaded demo-profile taste signals (sample data): ${demoTasteContext}
+Matched catalog examples from the demo profile (use only when relevant to the goal): ${demoCatalogContext}
 Previously Recommended IDs (AVOID): ${JSON.stringify(previouslyRecommendedIds.slice(0, 30))}
+Imported Playlist Tracks to Exclude: ${JSON.stringify(PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`).slice(0, 40))}
 Playlist Style Summary: ${playlistPreferenceSummary || "None (Direct prompt curation)"}
 ${chatInsightsText}
 
@@ -878,9 +1175,104 @@ ${compactCatalogPrompt}
 `;
 
             try {
-                let parsedData = await requestOllamaJson(systemPrompt, userPrompt);
-                
-                let currentRecs = normalizeRecommendations(parsedData.recommendations);
+                let parsedData;
+                if (!isPlaylistGrounded) {
+                    const excludedTopics = explicitExclusions.split(",").map(topic => topic.trim()).filter(Boolean);
+                    const listenerContext = [
+                        `Listener-approved taste summary: ${listenerTasteSummary || "None"}`,
+                        `Listener-provided preferences: ${listenerPreferences || "None"}`,
+                        `Loaded demo-profile taste signals (top artist, genre, and mood only): ${demoTasteContext}`,
+                        `Profile-matched catalog examples (use only when relevant): ${demoCatalogContext}`,
+                        `Listener-confirmed chat preferences: ${CONFIRMED_TASTE_INSIGHTS.join("; ") || "None"}`
+                    ].join("\n");
+                    const excludedTokens = excludedTopics.map(topic => topic.toLowerCase()).filter(Boolean);
+                    const knownIds = new Set([
+                        ...previouslyRecommendedIds,
+                        ...PLAYLIST_ITEMS.map(track => `playlist:${track.id}`)
+                    ].map(String));
+                    const recommendations = [];
+                    let totalMinutes = 0;
+                    const selectedTrackNames = [];
+                    let refillError = "";
+                    const maxDiscoveryPasses = 3;
+
+                    for (let pass = 0; pass < maxDiscoveryPasses; pass += 1) {
+                        const remainingBudget = budgetMins - totalMinutes;
+                        if (remainingBudget <= 0) break;
+
+                        let promptTracks;
+                        try {
+                            promptTracks = await fetchExternalDiscoveryTracks({
+                                goalText,
+                                budgetMins: remainingBudget,
+                                preferredTopics: [goalText],
+                                excludedTopics,
+                                existingIds: [...knownIds],
+                                currentTracks: selectedTrackNames,
+                                listenerContext,
+                                task: "discovery"
+                            });
+                        } catch (err) {
+                            if (recommendations.length === 0) throw err;
+                            console.error("Could not refill the verified playlist:", err);
+                            refillError = err.message;
+                            break;
+                        }
+
+                        for (const track of promptTracks) {
+                            if (knownIds.has(track.id)) continue;
+                            knownIds.add(track.id);
+                            const searchText = `${track.title} ${track.artist} ${track.tags.join(" ")}`.toLowerCase();
+                            if (excludedTokens.some(topic => searchText.includes(topic))) continue;
+                            if (totalMinutes + track.duration > budgetMins) continue;
+
+                            totalMinutes += track.duration;
+                            selectedTrackNames.push(`${track.artist} - ${track.title}`);
+                            if (!CATALOG_ITEMS.some(item => item.id === track.id)) {
+                                CATALOG_ITEMS.unshift(track);
+                            }
+                            recommendations.push({
+                                content_id: track.id,
+                                reason: track.reason || `Directly matched to "${goalText}".`
+                            });
+                        }
+
+                        if (totalMinutes >= budgetMins) break;
+                    }
+
+                    if (recommendations.length) {
+                        document.getElementById("catalogStatus").textContent =
+                            `${CATALOG_ITEMS.length} candidate songs (${recommendations.length} verified tracks loaded from prompt)`;
+                        renderCatalogTable();
+                    }
+                    const filledBudget = totalMinutes >= budgetMins;
+                    parsedData = {
+                        normalized_goal: goalText,
+                        preferred_topics: [goalText],
+                        excluded_topics: excludedTopics,
+                        recommendations,
+                        status: recommendations.length ? "discovered_match" : "no_match",
+                        ai_comment: recommendations.length
+                            ? `Curated ${recommendations.length} catalog-verified tracks (${totalMinutes}/${budgetMins} minutes).${filledBudget ? "" : " The catalog did not provide enough unambiguous matching tracks to fill the full duration."}${refillError ? ` Additional-track request failed: ${refillError}` : ""}`
+                            : "No new catalog-verified tracks matched the request and exclusions."
+                    };
+                    renderResults(parsedData, budgetMins);
+                    if (filledBudget) {
+                        showToast(`Goal Queue filled (${totalMinutes}/${budgetMins} minutes).`, "success");
+                    } else if (recommendations.length) {
+                        showToast(`Added ${recommendations.length} verified tracks (${totalMinutes}/${budgetMins} minutes); there were not enough unambiguous catalog matches to fill the target.`, "warning");
+                    } else {
+                        showToast("No new catalog-verified tracks matched the request.", "warning");
+                    }
+                    return;
+                }
+
+                parsedData = await requestAiJson(systemPrompt, userPrompt, "recommendation", true);
+
+                let currentRecs = filterExcludedRecommendations(
+                    normalizeRecommendations(parsedData.recommendations),
+                    recommendationExclusions
+                );
                 parsedData.recommendations = currentRecs;
                 let currentDuration = currentRecs.reduce((sum, rec) => {
                     const item = CATALOG_ITEMS.find(c => c.id === rec.content_id);
@@ -889,7 +1281,7 @@ ${compactCatalogPrompt}
 
                 const targetMinDuration = Math.floor(budgetMins * 0.8);
 
-                const needsPromptExpansion = 
+                const needsPromptExpansion =
                     parsedData.status === "outside_discovery" ||
                     parsedData.status === "needs_prompt_expansion" ||
                     parsedData.status === "no_match" ||
@@ -900,13 +1292,20 @@ ${compactCatalogPrompt}
                 if (needsPromptExpansion) {
                     const remainingNeeded = Math.max(budgetMins - currentDuration, 8);
                     showToast(`Curating authentic tracks for "${parsedData.normalized_goal || goalText}"...`, "info");
-                    
+
                     const promptTracks = await fetchExternalDiscoveryTracks({
                         goalText,
                         budgetMins: remainingNeeded,
                         preferredTopics: parsedData.preferred_topics || [goalText],
                         excludedTopics: parsedData.excluded_topics || [],
-                        existingIds: [...previouslyRecommendedIds, ...currentRecs.map(r => r.content_id)]
+                        existingIds: [...recommendationExclusions.ids, ...currentRecs.map(r => r.content_id)],
+                        currentTracks: [
+                            ...PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`),
+                            ...currentRecs.map(recommendation => {
+                                const item = CATALOG_ITEMS.find(candidate => candidate.id === recommendation.content_id);
+                                return item ? `${item.artist} - ${item.title}` : String(recommendation.content_id);
+                            })
+                        ]
                     });
 
                     if (promptTracks.length) {
@@ -929,7 +1328,7 @@ ${compactCatalogPrompt}
                         parsedData.status = "prompt_expanded";
                         parsedData.recommendations = currentRecs;
                         parsedData.ai_comment = `Curated ${promptTracks.length} tracks specifically matching "${goalText}".`;
-                        
+
                     }
                 }
 
@@ -937,7 +1336,7 @@ ${compactCatalogPrompt}
                 const remainingBudget = budgetMins - currentDuration;
                 if (currentDuration < targetMinDuration && remainingBudget >= 3 && parsedData.status !== "clarify" && parsedData.status !== "no_match") {
                     showToast(`Queue is ${currentDuration}m. Curating filler tracks for your ${budgetMins}m budget...`, "info");
-                    
+
                     const currentTrackNames = currentRecs.map(r => {
                         const item = CATALOG_ITEMS.find(c => c.id === r.content_id);
                         return item ? `${item.artist} - ${item.title}` : r.content_id;
@@ -949,8 +1348,11 @@ ${compactCatalogPrompt}
                         totalBudget: budgetMins,
                         preferredTopics: parsedData.preferred_topics || [goalText],
                         excludedTopics: parsedData.excluded_topics || [],
-                        existingIds: [...previouslyRecommendedIds, ...currentRecs.map(r => r.content_id)],
-                        currentTracks: currentTrackNames
+                        existingIds: [...recommendationExclusions.ids, ...currentRecs.map(r => r.content_id)],
+                        currentTracks: [
+                            ...PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`),
+                            ...currentTrackNames
+                        ]
                     });
 
                     if (fillerTracks && fillerTracks.length > 0) {
@@ -975,8 +1377,7 @@ ${compactCatalogPrompt}
                         showToast(`Added ${fillerTracks.length} tracks to fill queue (${currentDuration + addedFillerDuration}/${budgetMins}m)`, "success");
                     }
                 }
-
-                renderResults(parsedData, budgetMins, includeHistory);
+                renderResults(parsedData, budgetMins);
                 showToast("Goal Queue successfully generated!", "success");
 
             } catch (err) {
@@ -988,14 +1389,14 @@ ${compactCatalogPrompt}
                     recommendations: [],
                     status: "no_match",
                     ai_comment: `Unable to complete queue generation: ${err.message}`
-                }, budgetMins, includeHistory);
+                }, budgetMins);
                 showToast(`Generation failed: ${err.message}`, "error");
             } finally {
                 setLoading(false);
             }
         }
 
-        function renderResults(data, requestedBudget, includeHistory) {
+        function renderResults(data, requestedBudget) {
             document.getElementById("emptyState").classList.add("hidden");
             document.getElementById("outputContent").classList.remove("hidden");
 
@@ -1202,11 +1603,11 @@ ${compactCatalogPrompt}
         function renderLearnedTasteNotes() {
             const container = document.getElementById("learnedTasteNotesContainer");
             if (!container) return;
-            if (!CHAT_TASTE_INSIGHTS.length) {
-                container.innerHTML = `<span class="text-[10px] text-slate-500 italic p-1">No conversational preferences recorded yet. Tell the AI what you like or dislike!</span>`;
+            if (!CONFIRMED_TASTE_INSIGHTS.length) {
+                container.innerHTML = `<span class="text-[10px] text-slate-500 italic p-1">No confirmed preferences yet. Confirm a suggestion above to use it in Goal Mode.</span>`;
                 return;
             }
-            container.innerHTML = CHAT_TASTE_INSIGHTS.map((note, idx) => `
+            container.innerHTML = CONFIRMED_TASTE_INSIGHTS.map((note, idx) => `
                 <span class="inline-flex items-center bg-purple-950/70 text-purple-200 border border-purple-800/60 px-2 py-0.5 rounded text-[10px] font-medium">
                     <span>${escapeHtml(note)}</span>
                     <button type="button" onclick="removeTasteInsight(${idx})" class="ml-1.5 text-purple-400 hover:text-red-400 focus:outline-none">
@@ -1216,16 +1617,73 @@ ${compactCatalogPrompt}
             `).join("");
         }
 
-        function removeTasteInsight(index) {
-            CHAT_TASTE_INSIGHTS.splice(index, 1);
+        function renderPendingTasteInsights() {
+            const container = document.getElementById("pendingTasteNotesContainer");
+            if (!container) return;
+            if (!PENDING_TASTE_INSIGHTS.length) {
+                container.innerHTML = `<span class="text-[10px] text-slate-500 italic">No suggestions awaiting review.</span>`;
+                return;
+            }
+            container.innerHTML = PENDING_TASTE_INSIGHTS.map((note, idx) => `
+                <div class="flex items-center gap-2 rounded border border-amber-800/60 bg-amber-950/20 p-2">
+                    <span class="min-w-0 flex-1 text-[10px] text-slate-200">${escapeHtml(note)}</span>
+                    <button type="button" onclick="confirmTasteInsight(${idx})" class="shrink-0 rounded bg-emerald-800/70 px-2 py-1 text-[10px] font-medium text-emerald-100 hover:bg-emerald-700">Confirm</button>
+                    <button type="button" aria-label="Dismiss preference suggestion" onclick="removePendingTasteInsight(${idx})" class="shrink-0 px-1 text-slate-400 hover:text-red-300">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            `).join("");
+        }
+
+        function confirmTasteInsight(index) {
+            if (!Number.isInteger(index) || index < 0 || index >= PENDING_TASTE_INSIGHTS.length) return;
+            const [insight] = PENDING_TASTE_INSIGHTS.splice(index, 1);
+            if (!CONFIRMED_TASTE_INSIGHTS.includes(insight)) {
+                CONFIRMED_TASTE_INSIGHTS.push(insight);
+            }
+            const saveStatus = document.getElementById("profileSaveStatus");
+            if (saveStatus) saveStatus.textContent = "Unsaved preference changes";
+            renderPendingTasteInsights();
             renderLearnedTasteNotes();
+            showToast("Preference confirmed for Goal Mode. Save your listener profile to retain it for this session.", "success");
+        }
+
+        function removePendingTasteInsight(index) {
+            if (!Number.isInteger(index) || index < 0 || index >= PENDING_TASTE_INSIGHTS.length) return;
+            PENDING_TASTE_INSIGHTS.splice(index, 1);
+            renderPendingTasteInsights();
+            showToast("Preference suggestion dismissed.", "info");
+        }
+
+        function removeTasteInsight(index) {
+            CONFIRMED_TASTE_INSIGHTS.splice(index, 1);
+            renderLearnedTasteNotes();
+            if (!updateSavedTastePreferences()) return;
             showToast("Preference removed from Goal Mode sync.", "info");
         }
 
+        function updateSavedTastePreferences() {
+            try {
+                const saved = sessionStorage.getItem("goalModeListenerProfile");
+                if (!saved) return true;
+                const profile = JSON.parse(saved);
+                delete profile.learnedPreferences;
+                profile.confirmedLearnedPreferences = CONFIRMED_TASTE_INSIGHTS;
+                sessionStorage.setItem("goalModeListenerProfile", JSON.stringify(profile));
+                return true;
+            } catch (err) {
+                showToast(`Could not update saved chat preferences: ${err.message}`, "error");
+                return false;
+            }
+        }
+
         function clearChatPreferences() {
-            CHAT_TASTE_INSIGHTS = [];
+            CONFIRMED_TASTE_INSIGHTS = [];
+            PENDING_TASTE_INSIGHTS = [];
             renderLearnedTasteNotes();
-            showToast("Reset learned chat preferences.", "info");
+            renderPendingTasteInsights();
+            if (!updateSavedTastePreferences()) return;
+            showToast("Reset confirmed and pending chat preferences.", "info");
         }
 
         function clearChatHistory() {
@@ -1339,6 +1797,8 @@ ${compactCatalogPrompt}
             const listenerPreferences = document.getElementById("listenerExplicitPreferences")?.value.trim() || "None";
             const currentQueueSnapshot = LAST_RECOMMENDATION_DATA?.recommendations || [];
             const playlistCount = PLAYLIST_ITEMS.length;
+            const demoTasteContext = getDemoTasteContext();
+            const demoCatalogContext = getDemoCatalogContext();
 
             const systemInstruction = `You are the Goal Mode AI Taste Concierge.
 Your purpose is to have an intelligent, musical dialogue with the listener about their audio taste, previous queue recommendations, and listening goals.
@@ -1350,14 +1810,16 @@ CURRENT RECOMMENDER & SESSION CONTEXT:
 - Playlist Loaded: ${playlistCount > 0 ? `Yes (${playlistCount} songs)` : 'No (direct prompt mode)'}
 - Listener-Approved Taste Summary: "${listenerTasteSummary}"
 - Listener-Provided Preferences: "${listenerPreferences}"
+- Loaded demo-profile taste signals (sample data; top artist, genre, and mood only): ${demoTasteContext}
+- Profile-matched catalog examples (use only when relevant): ${demoCatalogContext}
 - Current Active Queue Recommendations: ${JSON.stringify(currentQueueSnapshot.map(t => ({ title: t.title, artist: t.artist, duration: t.duration, reason: t.reason })))}
 - Treat the active queue above as authoritative context. An empty database search does not mean the queue is empty; use the actual queue items to answer questions about these recommendations.
-- Existing Discovered Taste Notes: ${JSON.stringify(CHAT_TASTE_INSIGHTS)}
+- Listener-Confirmed Chat Preferences: ${JSON.stringify(CONFIRMED_TASTE_INSIGHTS)}
 
 MANDATORY RULES:
 1. Be musically knowledgeable, conversational, concise, and helpful.
 2. If the user asks about specific tracks in their queue, reference the actual titles, artists, durations, and curation reasons from the context above.
-3. EXTRACT TASTE INSIGHTS: If the listener shares a like, dislike, favorite artist, subgenre preference, or track critique (e.g. "I love upbeat synth", "Dislike acoustic guitar", "Too repetitive", "Need high energy for running"), identify 1 to 3 concise taste insight strings to be stored in "extracted_taste_insights".
+3. SUGGEST TASTE INSIGHTS: If the listener shares a like, dislike, favorite artist, subgenre preference, or track critique (e.g. "I love upbeat synth", "Dislike acoustic guitar", "Too repetitive", "Need high energy for running"), identify 1 to 3 concise suggestions in "extracted_taste_insights". The listener must confirm each suggestion before it affects recommendations or is saved; do not imply an unconfirmed suggestion is already applied.
 4. SUGGEST REFINED GOALS: If the listener asks for adjustments or if their feedback warrants a modified Goal Mode prompt, provide a "suggested_recommender_action" with a concrete "goal", "budget" (number), and "exclusions" string. Otherwise set it to null.
 
 Return valid JSON strictly matching this schema:
@@ -1389,27 +1851,31 @@ NEW LISTENER MESSAGE:
 `;
 
             try {
-                const response = await requestOllamaJson(systemInstruction, chatPrompt, "chat");
+                const response = await requestAiJson(systemInstruction, chatPrompt, "chat");
                 
                 CHAT_HISTORY.push({ role: "user", text: userText });
                 CHAT_HISTORY.push({ role: "assistant", text: response.reply });
 
+                let addedSuggestions = 0;
                 if (Array.isArray(response.extracted_taste_insights) && response.extracted_taste_insights.length > 0) {
                     response.extracted_taste_insights.forEach(insight => {
-                        const clean = insight.trim();
-                        if (clean && !CHAT_TASTE_INSIGHTS.includes(clean)) {
-                            CHAT_TASTE_INSIGHTS.push(clean);
+                        const clean = typeof insight === "string" ? insight.trim() : "";
+                        if (clean && !CONFIRMED_TASTE_INSIGHTS.includes(clean) && !PENDING_TASTE_INSIGHTS.includes(clean)) {
+                            PENDING_TASTE_INSIGHTS.push(clean);
+                            addedSuggestions += 1;
                         }
                     });
-                    renderLearnedTasteNotes();
-                    showToast(`Updated learned taste profile with ${response.extracted_taste_insights.length} insight(s)!`, "success");
+                    if (addedSuggestions) {
+                        renderPendingTasteInsights();
+                        showToast(`${addedSuggestions} preference suggestion(s) added for your review. Confirm any you want to use.`, "info");
+                    }
                 }
 
                 appendMessageToFeed("assistant", response.reply, response.suggested_recommender_action);
 
             } catch (err) {
                 console.error("Chat error:", err);
-                appendMessageToFeed("assistant", `I ran into an issue connecting with the local Ollama service: ${err.message}. Check the Docker services and try again.`);
+                appendMessageToFeed("assistant", `I ran into an issue connecting with the Cloudflare AI Worker: ${err.message}. Check the Worker URL and Docker services, then try again.`);
                 showToast(`Chat error: ${err.message}`, "error");
             } finally {
                 if (typingEl) typingEl.classList.remove("hidden");
@@ -1447,12 +1913,14 @@ NEW LISTENER MESSAGE:
         }
 
         function applyLearnedTasteToRecommender() {
-            if (!CHAT_TASTE_INSIGHTS.length) {
-                showToast("Chat with the AI first to discover custom taste preferences.", "info");
+            if (!CONFIRMED_TASTE_INSIGHTS.length) {
+                showToast(PENDING_TASTE_INSIGHTS.length
+                    ? "Confirm a preference suggestion before using it in Goal Mode."
+                    : "Chat with the AI first to discover custom taste preferences.", "info");
                 return;
             }
             switchTab("prototype");
-            showToast(`Syncing ${CHAT_TASTE_INSIGHTS.length} chat preference(s) with Goal Mode...`, "info");
+            showToast(`Using ${CONFIRMED_TASTE_INSIGHTS.length} confirmed chat preference(s) with Goal Mode...`, "info");
             setTimeout(() => {
                 generateGoalQueue();
             }, 300);

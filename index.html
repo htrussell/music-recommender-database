@@ -31,7 +31,7 @@
                     Goal Mode AI Prototype
                     <span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-700/60 px-2 py-0.5 rounded font-mono font-medium">v3.0</span>
                 </h1>
-                <p class="text-xs text-slate-400">Time-Budgeted Audio Recommendation Engine • Powered by local Ollama</p>
+                <p class="text-xs text-slate-400">Time-Budgeted Audio Recommendation Engine • Cloudflare AI with local embedding model provisioned</p>
             </div>
         </div>
 
@@ -103,11 +103,30 @@
 
                 <section class="p-3 bg-blue-950/30 rounded-lg border border-blue-800/50 space-y-2">
                     <h3 class="text-xs font-semibold text-blue-200 flex items-center"><i class="fa-solid fa-shield-halved mr-1.5"></i> Listener data & consent</h3>
-                    <p class="text-[10px] text-slate-300 leading-relaxed">Playlist and profile data are stored only in this browser tab's session when you choose Save. Public playlist links are read by the local backend; recommendation and chat context is sent to local Ollama. Ollama can read the music catalog through a read-only database role. Listener profile data stays separate from the music catalog.</p>
+                    <p class="text-[10px] text-slate-300 leading-relaxed">Playlist and profile data are stored only in this browser tab's session when you choose Save. Public playlist links are read by the local backend. Recommendation and chat prompts, approved profile details, and relevant catalog results are sent to the Cloudflare AI Worker. The local backend reads the catalog through a read-only database role. Listener profile data is not stored in the music catalog.</p>
                     <label class="flex items-start gap-2 text-[10px] text-slate-300">
                         <input id="listenerConsentCheck" type="checkbox" class="mt-0.5 rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-0">
-                        <span>I consent to sending my listening goals, chat, and approved profile to local Ollama, and importing playlist data from YouTube for this demo.</span>
+                        <span>I consent to sending my listening goals, chat, approved profile details, and relevant catalog results to the Cloudflare AI Worker, and importing playlist data from YouTube for this demo.</span>
                     </label>
+                </section>
+
+                <section class="p-3 bg-slate-900/60 rounded-lg border border-slate-700/80 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-xs font-semibold text-slate-200">Streaming-habits demo profile</h3>
+                        <span class="text-[9px] text-amber-300">Synthetic sample · not an account</span>
+                    </div>
+                    <p class="text-[10px] text-slate-400 leading-relaxed">Load a sample listener by ID (1–4,000). The catalog is matched against the sample's top artist and a curated genre alias. Only top artist, genre, and mood are shared with the AI; demographics and usage statistics stay in this browser.</p>
+                    <div class="flex gap-2">
+                        <label class="sr-only" for="demoProfileIdInput">Demo listener ID</label>
+                        <input id="demoProfileIdInput" type="number" min="1" max="4000" value="1" aria-label="Demo listener ID"
+                            class="min-w-0 flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500">
+                        <button id="loadDemoProfileBtn" type="button" onclick="loadDemoProfile()"
+                            class="bg-indigo-700 hover:bg-indigo-600 text-white text-[10px] font-medium px-3 rounded transition">Load sample</button>
+                    </div>
+                    <p id="demoProfileStatus" role="status" class="text-[10px] text-slate-400">No sample profile loaded.</p>
+                    <div id="demoProfileDetails" class="hidden grid grid-cols-2 gap-1.5 rounded bg-slate-950/70 p-2 text-[10px]"></div>
+                    <button id="clearDemoProfileBtn" type="button" onclick="clearDemoProfile()"
+                        class="hidden w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] py-1.5 rounded border border-slate-700 transition">Clear demo profile</button>
                 </section>
 
                 <section class="p-3 bg-slate-900/60 rounded-lg border border-slate-700/80 space-y-2">
@@ -186,14 +205,6 @@
                     </div>
                 </div>
 
-                <!-- History Context Setting -->
-                <div class="bg-slate-900/50 p-2.5 rounded-lg border border-slate-700/60 flex items-start space-x-2.5">
-                    <input type="checkbox" id="includeHistoryCheck" checked class="mt-1 rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-0">
-                    <label for="includeHistoryCheck" class="text-xs text-slate-300 cursor-pointer">
-                        <span class="font-medium text-slate-200">Include Listener History:</span> Heavy fiction podcast listener.
-                        <span class="text-slate-400 block text-[10px]">Tests if Goal Mode properly overrides existing habit inertia.</span>
-                    </label>
-                </div>
             </div>
 
             <!-- Submit Action -->
@@ -382,22 +393,31 @@
                 </div>
             </div>
 
-            <!-- Learned Conversational Preferences Card -->
+            <!-- Conversational Preference Review -->
             <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-4 shadow-md space-y-3 flex-1 flex flex-col justify-between">
                 <div class="space-y-2">
                     <div class="flex items-center justify-between border-b border-slate-700 pb-2">
                         <h3 class="text-xs font-semibold text-white flex items-center">
-                            <i class="fa-solid fa-brain text-purple-400 mr-2"></i> Learned Chat Preferences
+                            <i class="fa-solid fa-brain text-purple-400 mr-2"></i> Chat Preference Review
                         </h3>
                         <span class="text-[9px] bg-purple-900/50 text-purple-300 border border-purple-700/40 px-1.5 py-0.5 rounded font-mono">
-                            Influences Goal Mode
+                            Listener controlled
                         </span>
                     </div>
                     <p class="text-[11px] text-slate-400 leading-relaxed">
-                        Preferences & critiques discovered during chat are saved here and automatically injected into subsequent recommendation calls.
+                        Chat-discovered preferences are suggestions only. Confirm each one before Goal Mode can use it; pending suggestions are never saved to your profile.
                     </p>
-                    <div id="learnedTasteNotesContainer" class="flex flex-wrap gap-1.5 min-h-[50px] p-2 bg-slate-900/80 border border-slate-800 rounded-lg">
-                        <span class="text-[10px] text-slate-500 italic">No conversational preferences recorded yet. Tell the AI what you like or dislike!</span>
+                    <div class="space-y-1.5">
+                        <h4 class="text-[10px] font-semibold uppercase tracking-wider text-amber-300">Awaiting your confirmation</h4>
+                        <div id="pendingTasteNotesContainer" class="space-y-1.5 min-h-[32px] p-2 bg-slate-900/80 border border-slate-800 rounded-lg">
+                            <span class="text-[10px] text-slate-500 italic">No suggestions awaiting review.</span>
+                        </div>
+                    </div>
+                    <div class="space-y-1.5">
+                        <h4 class="text-[10px] font-semibold uppercase tracking-wider text-purple-300">Confirmed · available to Goal Mode</h4>
+                        <div id="learnedTasteNotesContainer" class="flex flex-wrap gap-1.5 min-h-[42px] p-2 bg-slate-900/80 border border-slate-800 rounded-lg">
+                            <span class="text-[10px] text-slate-500 italic">No confirmed preferences yet.</span>
+                        </div>
                     </div>
                 </div>
 
@@ -405,11 +425,11 @@
                     <button onclick="applyLearnedTasteToRecommender()" 
                         class="w-full bg-purple-600/30 hover:bg-purple-600/50 active:bg-purple-700 text-purple-200 border border-purple-500/40 text-xs font-medium py-2 rounded-lg transition flex items-center justify-center space-x-1.5 shadow-sm">
                         <i class="fa-solid fa-wand-magic-sparkles text-[11px]"></i>
-                        <span>Apply Insights & Run Goal Mode</span>
+                        <span>Run Goal Mode with Confirmed Preferences</span>
                     </button>
                     <button onclick="clearChatPreferences()" 
                         class="w-full bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-300 text-[10px] py-1 rounded transition border border-slate-800">
-                        Reset Learned Chat Preferences
+                        Reset Chat Preferences
                     </button>
                 </div>
             </div>
@@ -469,7 +489,7 @@
                             Hello! I am your <strong>AI Taste Concierge</strong>. I have direct access to your current Goal Mode settings, loaded playlist signals, and queue recommendations.
                         </p>
                         <p class="leading-relaxed text-slate-300">
-                            Tell me what you liked or disliked about your recent queue, explore new musical directions, or ask me to propose a new goal. Any taste preferences we uncover will directly steer future recommendations!
+                            Tell me what you liked or disliked about your recent queue, explore new musical directions, or ask me to propose a new goal. I can suggest preferences for your review; only the ones you confirm will steer future recommendations.
                         </p>
                     </div>
                 </div>
@@ -487,7 +507,7 @@
                     </button>
                 </form>
                 <div class="flex items-center justify-between mt-2 px-1 text-[10px] text-slate-400">
-                    <span>Powered by local Ollama • Read-only music catalog access</span>
+                    <span>Cloudflare AI • Read-only music catalog access</span>
                     <span id="chatTypingIndicator" class="hidden text-purple-400 font-mono animate-pulse">
                         <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> AI Concierge is reflecting...
                     </span>

@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import os
 import re
@@ -16,13 +17,15 @@ from sqlglot import exp
 import yt_dlp
 
 
-MODEL = os.getenv("OLLAMA_MODEL", "lfm2.5-thinking:latest")
-CHAT_MODEL = os.getenv(
-    "OLLAMA_CHAT_MODEL",
-    "hf.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M",
-)
-SQL_MODEL = os.getenv("OLLAMA_SQL_MODEL", "qwen2.5-coder:1.5b")
+MODEL = os.getenv("CLOUDFLARE_RECOMMENDATION_MODEL", "llama")
+CHAT_MODEL = os.getenv("CLOUDFLARE_CHAT_MODEL", "glm")
+SQL_MODEL = os.getenv("CLOUDFLARE_SQL_MODEL", "glm")
+EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:v1.5")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+CLOUDFLARE_WORKER_URL = os.getenv(
+    "CLOUDFLARE_WORKER_URL",
+    "https://music-rec-ai.htrussell.workers.dev",
+).rstrip("/")
 DUCKDB_URL = os.getenv("DUCKDB_URL", "http://duckdb:8001")
 ADMIN_DSN = os.getenv(
     "MUSIC_ADMIN_DSN",
@@ -105,16 +108,27 @@ SAFE_FUNCTIONS = {
 MAX_QUERY_ROWS = 100
 
 app = FastAPI(title="Music Recommender Local AI API")
+logger = logging.getLogger(__name__)
 
 
 class AssistantRequest(BaseModel):
     systemInstruction: str = Field(min_length=1, max_length=20000)
     userContent: str = Field(min_length=1, max_length=30000)
-    task: Literal["recommendation", "chat"] = "recommendation"
+    task: Literal["recommendation", "chat", "discovery"] = "recommendation"
+    skipCatalog: bool = False
 
 
 class YouTubePlaylistRequest(BaseModel):
     playlistUrl: str = Field(min_length=1, max_length=2048)
+
+
+class TrackIdentity(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    artist: str = Field(min_length=1, max_length=300)
+
+
+class TrackVerificationRequest(BaseModel):
+    tracks: list[TrackIdentity] = Field(max_length=50)
 
 
 def extract_youtube_playlist_id(playlist_url: str) -> str:
@@ -262,54 +276,129 @@ def provision_read_only_role() -> None:
 
 def clean_json(text: str) -> dict[str, Any]:
     cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text.strip(), flags=re.IGNORECASE)
-    try:
-        value = json.loads(cleaned)
-    except json.JSONDecodeError as error:
-        raise HTTPException(status_code=502, detail=f"Ollama returned invalid JSON: {error}") from error
-    if not isinstance(value, dict):
-        raise HTTPException(status_code=502, detail="Ollama returned JSON that was not an object.")
-    return value
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", cleaned):
+        try:
+            value, _ = decoder.raw_decode(cleaned[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    excerpt = cleaned[:200].replace("\n", " ").strip()
+    if not excerpt:
+        detail = "AI provider returned an empty response instead of a JSON object."
+    else:
+        detail = f"AI provider did not return a JSON object. Response began: {excerpt!r}"
+    raise HTTPException(status_code=502, detail=detail)
 
 
-def call_ollama(
+def call_cloudflare_worker(
     system_message: str,
     user_message: str,
     *,
     model: str = MODEL,
+    allow_plain_text: bool = False,
+    max_tokens: int = 1024,
 ) -> dict[str, Any]:
+    input_payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message},
+        ],
+    }
     try:
         response = httpx.post(
-            f"{OLLAMA_URL.rstrip('/')}/api/chat",
-            json={
-                "model": model,
-                "stream": False,
-                "format": "json",
-                "think": False,
-                "messages": [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": user_message},
-                ],
-                "options": {"temperature": 0.2, "num_predict": 1600},
-            },
+            CLOUDFLARE_WORKER_URL,
+            json=input_payload,
             timeout=180.0,
         )
         response.raise_for_status()
-    except httpx.HTTPError as error:
-        raise HTTPException(status_code=503, detail=f"Could not reach local Ollama: {error}") from error
+    except httpx.HTTPStatusError as error:
+        response_detail = error.response.text.strip()
+        if response_detail:
+            response_detail = response_detail[:500]
+            detail = (
+                f"Cloudflare AI Worker returned HTTP {error.response.status_code}: "
+                f"{response_detail}"
+            )
+        else:
+            detail = f"Cloudflare AI Worker returned HTTP {error.response.status_code}."
+        raise HTTPException(status_code=502, detail=detail) from error
+    except httpx.RequestError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach the Cloudflare AI Worker: {error}",
+        ) from error
 
-    content = response.json().get("message", {}).get("content", "")
-    if not content:
-        raise HTTPException(status_code=502, detail="Ollama returned an empty response.")
-    return clean_json(content)
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Cloudflare AI Worker returned an invalid response.",
+        ) from error
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if isinstance(result, dict):
+        content = result.get("response")
+        if isinstance(content, str) and content.strip():
+            try:
+                return clean_json(content)
+            except HTTPException:
+                if allow_plain_text:
+                    return {
+                        "reply": content.strip(),
+                        "extracted_taste_insights": [],
+                        "suggested_recommender_action": None,
+                    }
+                raise
+        choices = result.get("choices")
+        if isinstance(choices, list):
+            if choices:
+                first_choice = choices[0]
+                message = first_choice.get("message") if isinstance(first_choice, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str) and content.strip():
+                    try:
+                        return clean_json(content)
+                    except HTTPException:
+                        if allow_plain_text:
+                            return {
+                                "reply": content.strip(),
+                                "extracted_taste_insights": [],
+                                "suggested_recommender_action": None,
+                            }
+                        raise
+            raise HTTPException(
+                status_code=502,
+                detail="Cloudflare AI Worker returned a completion without message content.",
+            )
+        return result
+    if not isinstance(result, str) or not result.strip():
+        raise HTTPException(
+            status_code=502,
+            detail="Cloudflare AI Worker returned an empty or invalid result.",
+        )
+    try:
+        return clean_json(result)
+    except HTTPException:
+        if allow_plain_text:
+            return {
+                "reply": result.strip(),
+                "extracted_taste_insights": [],
+                "suggested_recommender_action": None,
+            }
+        raise
 
 
 def validate_read_query(query: str) -> str:
     if not query or len(query) > 10000:
-        raise HTTPException(status_code=400, detail="Ollama generated an empty or oversized database query.")
+        raise HTTPException(status_code=400, detail="AI generated an empty or oversized database query.")
     try:
         statements = sqlglot.parse(query, read="postgres")
     except sqlglot.errors.ParseError as error:
-        raise HTTPException(status_code=400, detail=f"Ollama generated invalid SQL: {error}") from error
+        raise HTTPException(status_code=400, detail=f"AI generated invalid SQL: {error}") from error
 
     if len(statements) != 1 or not isinstance(statements[0], exp.Select):
         raise HTTPException(status_code=400, detail="Only a single SELECT query is permitted.")
@@ -547,15 +636,16 @@ def generate_catalog_tool(user_content: str) -> dict[str, Any]:
         "search may return no matches. Keep arguments concise and use null or empty lists for unused "
         "filters. The response schema is {tool: string, arguments: object}."
     )
-    plan = call_ollama(
+    plan = call_cloudflare_worker(
         tool_instruction,
         f"Listener request:\n{user_content}",
         model=SQL_MODEL,
+        max_tokens=384,
     )
     tool = plan.get("tool")
     arguments = plan.get("arguments", {})
     if not isinstance(tool, str) or not isinstance(arguments, dict):
-        raise HTTPException(status_code=502, detail="Ollama returned an invalid catalog-tool request.")
+        raise HTTPException(status_code=502, detail="AI provider returned an invalid catalog-tool request.")
     return {"tool": tool, "arguments": arguments}
 
 
@@ -651,16 +741,17 @@ def generate_catalog_query(user_content: str) -> str | None:
         "Do not use schema-qualified tables, comments, multiple statements, or functions. "
         "Add a LIMIT no greater than 100."
     )
-    plan = call_ollama(
+    plan = call_cloudflare_worker(
         query_system_instruction,
         f"Listener request:\n{user_content}",
         model=SQL_MODEL,
+        max_tokens=768,
     )
     query = plan.get("sql")
     if query is None:
         return None
     if not isinstance(query, str):
-        raise HTTPException(status_code=502, detail="Ollama did not provide a database SELECT query.")
+        raise HTTPException(status_code=502, detail="AI provider did not provide a database SELECT query.")
 
     canonical_query = canonicalize_catalog_sources(query)
     if canonical_query is not None:
@@ -678,7 +769,7 @@ def generate_catalog_query(user_content: str) -> str | None:
             if missing_catalog_table
             else ""
         )
-        repair = call_ollama(
+        repair = call_cloudflare_worker(
             query_system_instruction
             + " The previous generated SQL failed validation. Create a corrected query that satisfies "
             "all rules. If a user criterion cannot be expressed using the listed schema, omit that "
@@ -693,12 +784,13 @@ def generate_catalog_query(user_content: str) -> str | None:
                 ensure_ascii=True,
             ),
             model=SQL_MODEL,
+            max_tokens=768,
         )
         repaired_query = repair.get("sql")
         if not isinstance(repaired_query, str):
             raise HTTPException(
                 status_code=502,
-                detail="Ollama could not correct its invalid catalog query.",
+                detail="AI provider could not correct its invalid catalog query.",
             )
         try:
             return validate_read_query(repaired_query)
@@ -706,7 +798,7 @@ def generate_catalog_query(user_content: str) -> str | None:
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Ollama could not generate a valid read-only catalog query after correction: "
+                    "AI provider could not generate a valid read-only catalog query after correction: "
                     f"{repair_error.detail}"
                 ),
             ) from repair_error
@@ -747,23 +839,196 @@ def healthcheck() -> dict[str, str]:
         }
     except (ValueError, TypeError) as error:
         raise HTTPException(status_code=503, detail=f"Ollama returned an invalid model list: {error}") from error
-    required_models = {
-        "recommendation": MODEL,
-        "chat": CHAT_MODEL,
-        "sql": SQL_MODEL,
-    }
+    required_models = {"embedding": EMBEDDING_MODEL}
     missing_models = [model for model in required_models.values() if model not in available_models]
     if missing_models:
         raise HTTPException(
             status_code=503,
             detail=f"Required local model(s) are not available yet: {', '.join(missing_models)}.",
         )
-    return {"status": "ok", **{f"{role}_model": model for role, model in required_models.items()}}
+    return {
+        "status": "ok",
+        "model": f"Cloudflare Worker ({MODEL}/{CHAT_MODEL}/{SQL_MODEL})",
+        **{f"{role}_model": model for role, model in required_models.items()},
+    }
 
 
 @app.post("/api/playlist/youtube")
 def import_youtube_playlist(request: YouTubePlaylistRequest) -> dict[str, Any]:
     return load_youtube_playlist(request.playlistUrl)
+
+
+@app.get("/api/demo-profile/{listener_id}")
+def load_demo_profile(listener_id: int) -> dict[str, Any]:
+    if listener_id < 1:
+        raise HTTPException(status_code=422, detail="Demo listener ID must be a positive integer.")
+    try:
+        response = httpx.get(
+            f"{DUCKDB_URL.rstrip('/')}/demo-profiles/{listener_id}",
+            timeout=10.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        try:
+            detail = error.response.json().get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+        detail_message = detail if isinstance(detail, str) else str(error)
+        if error.response.status_code in {404, 422}:
+            raise HTTPException(
+                status_code=error.response.status_code,
+                detail=detail_message,
+            ) from error
+        if error.response.status_code >= 500:
+            raise HTTPException(
+                status_code=503,
+                detail=f"DuckDB demo-profile lookup failed: {detail_message}",
+            ) from error
+        raise HTTPException(
+            status_code=502,
+            detail=f"DuckDB rejected the demo-profile request: {detail_message}",
+        ) from error
+    except httpx.RequestError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach the DuckDB catalog service: {error}",
+        ) from error
+
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="DuckDB returned an invalid demo-profile response.") from error
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("profile"), dict)
+        or not isinstance(payload.get("tracks"), list)
+        or any(not isinstance(track, dict) for track in payload["tracks"])
+    ):
+        raise HTTPException(status_code=502, detail="DuckDB returned an invalid demo-profile response.")
+    return payload
+
+
+def normalize_track_identity(value: str) -> str:
+    return "".join(
+        character
+        for character in value.lower()
+        if character.isalnum()
+    )
+
+
+@app.post("/api/catalog/verify-tracks")
+def verify_discovered_tracks(request: TrackVerificationRequest) -> dict[str, Any]:
+    candidates = [track.model_dump() for track in request.tracks]
+    rows = query_duckdb_catalog("verify_tracks", {"tracks": candidates})
+    tracks_by_candidate: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        candidate_index = row.get("candidate_index")
+        if isinstance(candidate_index, int) and 0 <= candidate_index < len(candidates):
+            tracks_by_candidate.setdefault(candidate_index, []).append(row)
+
+    verified_tracks = []
+    seen_track_ids: set[str] = set()
+    for candidate_index, candidate in enumerate(candidates):
+        matches = tracks_by_candidate.get(candidate_index, [])
+        unique_matches: dict[tuple[str, str], dict[str, Any]] = {}
+        for match in matches:
+            key = (
+                normalize_track_identity(match.get("title", "")),
+                normalize_track_identity(match.get("artist", "")),
+            )
+            previous = unique_matches.get(key)
+            if previous is None or (
+                match.get("candidate_artist_match") == 1,
+                match.get("source") == "primary",
+                match.get("popularity") or 0,
+            ) > (
+                previous.get("candidate_artist_match") == 1,
+                previous.get("source") == "primary",
+                previous.get("popularity") or 0,
+            ):
+                unique_matches[key] = match
+
+        exact_title_matches = [
+            row for row in unique_matches.values()
+            if row.get("title_similarity") == 1.0
+        ]
+        candidate_matches = exact_title_matches or list(unique_matches.values())
+        artist_matches = [
+            row for row in candidate_matches
+            if (
+                row.get("candidate_artist_match") == 1
+                or normalize_track_identity(row.get("artist", ""))
+                == normalize_track_identity(candidate["artist"])
+            )
+            and row.get("title_similarity", 1) >= 0.60
+        ]
+        selected = (
+            max(
+                artist_matches,
+                key=lambda row: (
+                    row.get("title_similarity", 0),
+                    row.get("source") == "primary",
+                    row.get("popularity") or 0,
+                ),
+            )
+            if artist_matches
+            else None
+        )
+        if selected is None:
+            fuzzy_matches = sorted(
+                (
+                    row for row in candidate_matches
+                    if row.get("title_similarity", 0) >= 0.68
+                    and (
+                        row.get("artist_similarity", 0) >= 0.35
+                        or row.get("title_similarity", 0) >= 0.82
+                    )
+                ),
+                key=lambda row: (
+                    0.7 * row.get("title_similarity", 0)
+                    + 0.3 * row.get("artist_similarity", 0),
+                    row.get("artist_similarity", 0),
+                    row.get("title_similarity", 0),
+                    row.get("source") == "primary",
+                    row.get("popularity") or 0,
+                ),
+                reverse=True,
+            )
+            if fuzzy_matches:
+                selected = fuzzy_matches[0]
+        if selected is None and exact_title_matches:
+            selected = max(
+                exact_title_matches,
+                key=lambda row: (
+                    row.get("artist_similarity", 0),
+                    row.get("source") == "primary",
+                    row.get("popularity") or 0,
+                ),
+            )
+        if selected is None:
+            continue
+        track_id = selected.get("catalog_track_id")
+        title = selected.get("title")
+        artist = selected.get("artist")
+        if track_id is None or not isinstance(title, str) or not isinstance(artist, str):
+            continue
+        stable_id = str(track_id)
+        if stable_id in seen_track_ids:
+            continue
+        seen_track_ids.add(stable_id)
+        verified_tracks.append(
+            {
+                "catalog_track_id": track_id,
+                "title": title,
+                "artist": artist,
+                "duration_ms": selected.get("duration_ms"),
+                "genre": selected.get("genre"),
+                "candidate_index": candidate_index,
+                "artist_corrected": selected.get("candidate_artist_match") != 1,
+                "source": selected.get("source", "primary"),
+            }
+        )
+    return {"tracks": verified_tracks}
 
 
 @app.post("/api/ai/json")
@@ -790,7 +1055,11 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
         latest_listener_message is not None
         and latest_listener_message.group(1).strip().casefold().strip("!.,? ") in small_talk
     )
-    if normalized_request in small_talk or latest_message_is_small_talk:
+    if request.task == "discovery" or request.skipCatalog:
+        rows = []
+        catalog_context_used = False
+        catalog_source = "none"
+    elif normalized_request in small_talk or latest_message_is_small_talk:
         rows = []
         catalog_context_used = False
         catalog_source = "none"
@@ -828,9 +1097,71 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
                 "db:<catalog_track_id>."
             )
 
-    final_result = call_ollama(
-        final_system_instruction,
-        final_user_content,
-        model=CHAT_MODEL if request.task == "chat" else MODEL,
-    )
+    selected_model = CHAT_MODEL if request.task == "chat" else MODEL
+    max_tokens = {
+        "chat": 512,
+        "recommendation": 1200,
+        "discovery": 1400,
+    }[request.task]
+    model_candidates = list(dict.fromkeys((selected_model, CHAT_MODEL, MODEL)))
+    retryable_response_error: HTTPException | None = None
+    retry_with_json_instruction = False
+    for model_index, model in enumerate(model_candidates):
+        try:
+            final_result = call_cloudflare_worker(
+                final_system_instruction
+                + (
+                    "\nThe previous model did not return a valid JSON object. Return exactly one complete "
+                    "JSON object matching the requested schema, with no prose or Markdown."
+                    if retry_with_json_instruction
+                    else ""
+                ),
+                final_user_content,
+                model=model,
+                allow_plain_text=request.task == "chat",
+                max_tokens=max_tokens,
+            )
+            break
+        except HTTPException as error:
+            invalid_json = (
+                error.status_code == 502
+                and (
+                    "JSON object" in error.detail
+                    or "empty or invalid result" in error.detail
+                )
+            )
+            empty_completion = (
+                error.status_code == 502
+                and "completion without message content" in error.detail
+            )
+            if (
+                not invalid_json
+                and not empty_completion
+            ):
+                raise
+            retryable_response_error = error
+            retry_with_json_instruction = retry_with_json_instruction or invalid_json
+            if model_index + 1 < len(model_candidates):
+                logger.warning(
+                    "Cloudflare model %s returned an unusable response for %s; retrying with %s",
+                    model,
+                    request.task,
+                    model_candidates[model_index + 1],
+                )
+                continue
+            attempted_models = ", ".join(model_candidates)
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Cloudflare AI Worker did not return a usable response "
+                    f"from all tried models: {attempted_models}."
+                ),
+            ) from error
+    else:
+        if retryable_response_error is not None:
+            raise retryable_response_error
+        raise HTTPException(
+            status_code=502,
+            detail="Cloudflare AI Worker did not return a completion.",
+        )
     return {"result": final_result, "catalog": rows, "catalog_source": catalog_source}
