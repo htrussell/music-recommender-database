@@ -99,6 +99,18 @@
       text-decoration: none;
     }
     nav a:hover { color: var(--teal); text-decoration: underline; }
+    nav a[aria-current="location"] {
+      padding-left: .55rem;
+      border-left: 3px solid var(--teal);
+      border-radius: 0 8px 8px 0;
+      background: var(--mint);
+      color: var(--teal-dark);
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .nav-current { margin: 0 0 .65rem; padding: .6rem .65rem; border-radius: 9px; background: var(--blue); color: var(--muted); font-size: .75rem; line-height: 1.35; }
+    .nav-current span { display: block; margin-bottom: .2rem; color: var(--teal-dark); font-size: .66rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .reading-indicator { display: none; }
     main { min-width: 0; }
     section {
       margin-bottom: 1.5rem;
@@ -301,6 +313,10 @@
       .layout { grid-template-columns: 1fr; }
       nav { position: static; max-height: none; display: grid; grid-template-columns: repeat(2, 1fr); }
       nav strong { grid-column: 1 / -1; }
+      nav .nav-current { grid-column: 1 / -1; }
+      .reading-indicator { position: sticky; top: .5rem; z-index: 10; display: block; margin: 0 0 .8rem; padding: .65rem .8rem; border: 1px solid var(--line); border-left: 4px solid var(--teal); border-radius: 10px; background: rgb(255 255 255 / 96%); box-shadow: var(--shadow); color: var(--muted); font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; }
+      .reading-indicator strong { margin-left: .4rem; color: var(--teal-dark); font-size: .82rem; letter-spacing: 0; text-transform: none; }
+      section { scroll-margin-top: 4.5rem; }
       .erd-entities { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .erd-entities.proposed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .arch-flow { grid-template-columns: 1fr; }
@@ -339,19 +355,21 @@
 </head>
 <body>
   <header class="hero">
-    <p class="eyebrow">Living architecture blueprint · evidence snapshot 2026-10-16</p>
+    <p class="eyebrow">Architecture Draft · evidence snapshot 2026-10-16</p>
     <h1>Music Recommender</h1>
     <p>A code-grounded description of the current data architecture, its proof of concept, and clearly labeled next steps. Parquet is canonical, DuckDB is the primary AI catalog query path, and PostgreSQL is the relational backup/fallback.</p>
     <div class="meta">
       <span class="pill">15-section project outline</span>
       <span class="pill">Current implementation + proposed analytics</span>
       <span class="pill"><a href="./architecture.md" style="color:inherit">Detailed Markdown version</a></span>
+      <span class="pill"><a href="https://github.com/htrussell/music-recommender-database" target="_blank" rel="noopener noreferrer" style="color:inherit">View our github repo</a></span>
     </div>
   </header>
 
   <div class="layout">
     <nav aria-label="Blueprint sections">
       <strong>Navigate blueprint</strong>
+      <div class="nav-current"><span>Currently reading</span><div id="navCurrentSection">1 · Executive summary</div></div>
       <a href="#s1">1 · Executive summary</a><a href="#s2">2 · Principles</a>
       <a href="#s3">3 · Process & context</a><a href="#s4">4 · Data domains</a>
       <a href="#s5">5 · Logical design</a><a href="#s6">6 · Physical POC</a>
@@ -359,10 +377,11 @@
       <a href="#s9">9 · Metadata</a><a href="#s10">10 · Quality</a>
       <a href="#s11">11 · Governance</a><a href="#s12">12 · Security</a>
       <a href="#s13">13 · Analytics & AI</a><a href="#s14">14 · Target state</a>
-      <a href="#s15">15 · Roadmap & risks</a>
+      <a href="#s15">15 · Roadmap & risks</a><a href="#resources">Implementation links</a>
     </nav>
 
     <main>
+      <div class="reading-indicator" aria-live="polite">Currently reading<strong id="mobileCurrentSection">1 · Executive summary</strong></div>
       <section id="s1">
         <h2>1. Executive summary</h2>
         <p class="lead">The system supports music discovery from a listener's natural-language request and optional public YouTube playlist. It uses a catalog-grounded recommendation flow: the API chooses a bounded catalog operation, retrieves candidates, and supplies approved context to a language model.</p>
@@ -1036,7 +1055,7 @@ conversation_data.memory_source(
         <p><strong>Accepted today:</strong> manual/eventual consistency, static catalog, no durable personalization, external model dependency, no vector retrieval despite configured embedding model, and no HA claim.</p>
       </section>
 
-      <section>
+      <section id="resources">
         <h2>Implementation and evidence links</h2>
         <ul>
           <li><a href="./architecture.md">Detailed Markdown blueprint</a></li>
@@ -1052,5 +1071,47 @@ conversation_data.memory_source(
     </main>
   </div>
   <footer>Living document · update this blueprint alongside material architecture changes and preserve an evidence date for measured counts or performance.</footer>
+  <script>
+    const blueprintSections = Array.from(document.querySelectorAll("main > section"));
+    const blueprintLinks = Array.from(document.querySelectorAll('nav[aria-label="Blueprint sections"] a[href^="#"]'));
+    const navCurrentSection = document.getElementById("navCurrentSection");
+    const mobileCurrentSection = document.getElementById("mobileCurrentSection");
+    let sectionUpdatePending = false;
+
+    function updateCurrentSection() {
+      sectionUpdatePending = false;
+      const atPageEnd = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
+      const marker = window.innerHeight * 0.32;
+      let current = blueprintSections[0];
+      if (atPageEnd) {
+        current = blueprintSections[blueprintSections.length - 1];
+      } else {
+        for (const section of blueprintSections) {
+          if (section.getBoundingClientRect().top <= marker) current = section;
+          else break;
+        }
+      }
+
+      const currentLink = blueprintLinks.find(link => link.getAttribute("href") === `#${current.id}`);
+      const label = currentLink ? currentLink.textContent.trim() : current.querySelector("h2")?.textContent.trim() || current.id;
+      blueprintLinks.forEach(link => {
+        if (link === currentLink) link.setAttribute("aria-current", "location");
+        else link.removeAttribute("aria-current");
+      });
+      navCurrentSection.textContent = label;
+      mobileCurrentSection.textContent = label;
+    }
+
+    function scheduleSectionUpdate() {
+      if (sectionUpdatePending) return;
+      sectionUpdatePending = true;
+      window.requestAnimationFrame(updateCurrentSection);
+    }
+
+    window.addEventListener("scroll", scheduleSectionUpdate, { passive: true });
+    window.addEventListener("resize", scheduleSectionUpdate);
+    window.addEventListener("hashchange", scheduleSectionUpdate);
+    updateCurrentSection();
+  </script>
 </body>
 </html>
