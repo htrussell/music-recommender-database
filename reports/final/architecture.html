@@ -193,6 +193,7 @@
     .lane-name { padding: .45rem; color: var(--teal-dark); font-size: .84rem; font-weight: 800; }
     .activities { display: flex; flex-wrap: wrap; gap: .45rem; }
     .activity { padding: .42rem .58rem; border: 1px solid var(--line); border-radius: 8px; background: white; font-size: .83rem; }
+    .bpmn-svg { display: block; width: 100%; height: auto; }
     .erd-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: .6rem; }
     .entity {
       padding: .7rem;
@@ -273,6 +274,7 @@
       background: #f5f7f8;
     }
     .erd-embed-link { margin: .55rem 0 1.25rem; font-size: .86rem; }
+    .print-summary { display: none; }
     .arch-flows { display: grid; gap: .85rem; }
     .arch-flow {
       display: grid;
@@ -352,14 +354,45 @@
       .star .fact, .star .dim-a, .star .dim-b, .star .dim-c, .star .dim-d, .star .dim-e { grid-column: auto; grid-row: auto; }
     }
     @media print {
-      body { background: white; }
-      .hero { padding: 1.5rem; color: var(--ink); background: white; border-bottom: 2px solid var(--teal); }
-      .hero p, .eyebrow { color: var(--muted); }
-      .pill { border-color: var(--line); color: var(--ink); }
-      .layout { display: block; padding: 1rem; }
-      nav { display: none; }
-      section { break-inside: avoid; box-shadow: none; }
-      a { color: inherit; }
+      @page { size: letter; margin: .45in .5in; }
+      body { background: white; font-size: 10pt; }
+      .hero, nav, .reading-indicator { display: none !important; }
+      .print-summary {
+        display: block;
+        min-height: 9.9in;
+        padding: .1in .05in;
+        color: var(--ink);
+        break-after: page;
+      }
+      .print-summary h1 { margin: 0 0 .1in; font-size: 30pt; }
+      .print-summary h2 { margin: 0 0 .15in; font-size: 14pt; }
+      .print-summary p { margin: .08in 0; }
+      .print-summary .summary-meta { color: var(--muted); font-size: 9pt; }
+      .print-summary .summary-flow { margin: .12in 0; padding: .12in; border: 1px solid var(--line); border-radius: 8px; background: #f5f9f8; font-weight: 700; text-align: center; }
+      .print-summary .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .1in .2in; margin: .12in 0; }
+      .print-summary .summary-item { padding: .1in; border: 1px solid var(--line); border-radius: 7px; }
+      .print-summary .summary-item strong { display: block; color: var(--teal-dark); }
+      .print-summary .summary-status { margin-top: .1in; padding: .12in; border-left: 3px solid var(--teal); background: var(--mint); }
+      .layout { display: block; max-width: none; padding: 0; }
+      main { min-width: 0; }
+      #s1 { display: none; }
+      section { box-shadow: none; break-inside: auto; }
+      .erd-domain { break-inside: avoid; }
+      .erd-embed { height: 5.35in; }
+      .erd-embed.user-serving { height: 4.15in; }
+      .erd-embed.conversation-memory { height: 3.8in; }
+      .data-dictionary { font-size: 7pt; }
+      .data-dictionary th, .data-dictionary td { padding: .28rem .32rem; }
+      .data-dictionary tr { break-inside: avoid; }
+      .mapping-table { font-size: 7.2pt; }
+      .mapping-table th, .mapping-table td { padding: .3rem .35rem; }
+      .benchmark { font-size: 8pt; }
+      .benchmark th, .benchmark td { padding: .28rem .32rem; }
+      table thead { display: table-header-group; }
+      table tr { break-inside: avoid; }
+      h2, h3, h4 { break-after: avoid-page; page-break-after: avoid; }
+      a { color: inherit; text-decoration: none; }
+      footer { padding: 0; }
     }
   </style>
 </head>
@@ -375,6 +408,23 @@
       <span class="pill"><a href="https://github.com/htrussell/music-recommender-database" target="_blank" rel="noopener noreferrer" style="color:inherit">View our github repo</a></span>
     </div>
   </header>
+
+  <section class="print-summary" aria-label="One-page executive summary">
+    <p class="eyebrow">Data Architecture Blueprint · Evidence snapshot 2026-10-16</p>
+    <h1>Music Recommender</h1>
+    <h2>Executive summary</h2>
+    <p>This blueprint describes a music-discovery assistant that turns a listener's natural-language request and optional public playlist into explainable, catalog-grounded recommendations. Primary users are listeners; the product owner is the proposed sponsor. Production streaming integration, playback, advertising, and fully automated preference capture are out of scope.</p>
+    <div class="summary-flow">Browser → FastAPI → DuckDB → canonical Parquet catalog<br>FastAPI → Cloudflare Worker for model planning and generation<br>PostgreSQL → reloadable catalog backup and bounded read-only fallback</div>
+    <p><strong>Current design:</strong> the eight-table Zstandard Parquet snapshot is canonical; DuckDB queries those files directly and is the primary AI catalog path. The API validates requests and bounds tool results before selected context is sent to the configured Cloudflare Worker. PostgreSQL is a separately loaded backup/fallback, not the primary catalog. Playlist/profile context is browser-session data. Ollama is configured for embeddings, but no vector index or retrieval is implemented.</p>
+    <div class="summary-grid">
+      <div class="summary-item"><strong>Bounded access · implemented</strong>Catalog tools return at most 100 rows; track-verification requests accept at most 50 candidates.</div>
+      <div class="summary-item"><strong>Safe fallback · implemented</strong>PostgreSQL fallback is read-only, allowlisted, limited to 100 rows, and has an 8-second statement timeout.</div>
+      <div class="summary-item"><strong>Grounded discovery · partial</strong>Relevant flows verify candidates against the local catalog and exclude playlist/recent tracks; match quality is not measured and fuzzy mismatches remain possible.</div>
+      <div class="summary-item"><strong>Freshness · not met</strong>Catalog transformation/loading is manual; no scheduler or freshness watermark ensures updates within 24 hours.</div>
+    </div>
+    <p class="summary-status"><strong>Target architecture, not current capability:</strong> consent-led playlist review, authenticated persistent profiles and saved queues, confirmed preferences, owner-scoped conversation memory, Kafka/Avro events, and model telemetry are specified as future work. No durable profile, queue, chat history, or memory store is implemented. Current snapshot: 89,741 tracks, 87,152 albums, 39,528 artists, and 90,603 genre labels across eight Parquet files (~13.8 MB compressed).</p>
+    <p class="summary-meta">The detailed sections distinguish implemented behavior from proposals and identify unmeasured performance claims.</p>
+  </section>
 
   <div class="layout">
     <nav aria-label="Blueprint sections">
@@ -470,13 +520,42 @@
         <h2>3. Business processes and system context</h2>
         <h3>Process A · Catalog-grounded recommendation</h3>
         <div class="diagram">
-          <p class="diagram-label">Swimlanes · activity-level BPMN representation</p>
-          <div class="lanes">
-            <div class="lane"><div class="lane-name">Listener / browser</div><div class="activities"><span class="activity">Describe request</span><span class="activity">Supply taste context</span><span class="activity">Review queue</span><span class="activity">Retain session exclusions</span></div></div>
-            <div class="lane"><div class="lane-name">AI API</div><div class="activities"><span class="activity">Choose catalog/no-catalog path</span><span class="activity">Validate tool arguments</span><span class="activity">Retrieve candidates</span><span class="activity">Apply fallback if needed</span><span class="activity">Validate response</span></div></div>
-            <div class="lane"><div class="lane-name">DuckDB / Parquet</div><div class="activities"><span class="activity">Run parameterized tool</span><span class="activity">Return ≤100 rows</span></div></div>
-            <div class="lane"><div class="lane-name">Model runtime · demo Cloudflare</div><div class="activities"><span class="activity">Plan tool / SQL</span><span class="activity">Generate response from supplied context</span><span class="activity">Local Ollama generation is an option, not current wiring</span></div></div>
-          </div>
+          <p class="diagram-label">BPMN swimlanes · sequence flow · current recommendation path</p>
+          <svg class="bpmn-svg" viewBox="0 0 1100 320" role="img" aria-label="BPMN process: listener submits request and taste context, API validates and routes it, AI plans a tool, API validates tool arguments, data stores return bounded candidates with PostgreSQL fallback if needed, API validates and normalizes results, AI generates reasons, and the listener reviews the queue.">
+            <title>Catalog-grounded recommendation BPMN</title>
+            <desc>One start event, ten ordered tasks across listener, API, AI, and data-store lanes, and one end event. Arrows show sequence flow.</desc>
+            <defs><marker id="bpmn-arrow-a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#54706e"/></marker></defs>
+            <rect x="0" y="0" width="1100" height="80" fill="#edf4f3"/><rect x="0" y="80" width="1100" height="80" fill="#f8fbfa"/><rect x="0" y="160" width="1100" height="80" fill="#edf4f3"/><rect x="0" y="240" width="1100" height="80" fill="#f8fbfa"/>
+            <path d="M0 80H1100M0 160H1100M0 240H1100" stroke="#bfd1ce"/>
+            <text x="10" y="35" font-size="12" font-weight="700" fill="#174c4e"><tspan x="10">Listener /</tspan><tspan x="10" dy="15">browser</tspan></text>
+            <text x="10" y="115" font-size="12" font-weight="700" fill="#174c4e">FastAPI</text>
+            <text x="10" y="195" font-size="12" font-weight="700" fill="#174c4e"><tspan x="10">AI agent /</tspan><tspan x="10" dy="15">Worker</tspan></text>
+            <text x="10" y="275" font-size="12" font-weight="700" fill="#174c4e"><tspan x="10">DuckDB /</tspan><tspan x="10" dy="15">Parquet · PG</tspan></text>
+            <g fill="none" stroke="#54706e" stroke-width="1.7" marker-end="url(#bpmn-arrow-a)">
+              <path d="M157 40H163"/><path d="M241 40H252V40H251"/><path d="M329 40H340V120H339"/><path d="M417 120H428V200H427"/><path d="M505 200H516V120H515"/><path d="M593 120H604V280H603"/><path d="M681 280H692V120H691"/><path d="M769 120H780V120H779"/><path d="M857 120H868V200H867"/><path d="M945 200H956V40H955"/><path d="M1033 40H1048"/>
+            </g>
+            <circle cx="145" cy="40" r="12" fill="#fff" stroke="#176d70" stroke-width="2"/><text x="145" y="67" text-anchor="middle" font-size="9" fill="#334">Start</text>
+            <g fill="#fff" stroke="#176d70" stroke-width="1.5">
+              <rect x="163" y="16" width="78" height="48" rx="7"/><rect x="251" y="16" width="78" height="48" rx="7"/>
+              <rect x="339" y="96" width="78" height="48" rx="7"/><rect x="427" y="176" width="78" height="48" rx="7"/>
+              <rect x="515" y="96" width="78" height="48" rx="7"/><rect x="603" y="256" width="78" height="48" rx="7"/>
+              <rect x="691" y="96" width="78" height="48" rx="7"/><rect x="779" y="96" width="78" height="48" rx="7"/>
+              <rect x="867" y="176" width="78" height="48" rx="7"/><rect x="955" y="16" width="78" height="48" rx="7"/>
+            </g>
+            <g text-anchor="middle" font-size="10" fill="#183b3c">
+              <text x="202" y="36"><tspan x="202">Describe</tspan><tspan x="202" dy="12">request</tspan></text>
+              <text x="290" y="36"><tspan x="290">Supply taste</tspan><tspan x="290" dy="12">context</tspan></text>
+              <text x="378" y="116"><tspan x="378">Validate</tspan><tspan x="378" dy="12">request</tspan></text>
+              <text x="466" y="196"><tspan x="466">Plan named</tspan><tspan x="466" dy="12">tool call</tspan></text>
+              <text x="554" y="116"><tspan x="554">Validate tool</tspan><tspan x="554" dy="12">arguments</tspan></text>
+              <text x="642" y="276"><tspan x="642">Run bounded</tspan><tspan x="642" dy="12">catalog query</tspan></text>
+              <text x="730" y="116"><tspan x="730">Use PG fallback</tspan><tspan x="730" dy="12">if needed</tspan></text>
+              <text x="818" y="116"><tspan x="818">Verify and</tspan><tspan x="818" dy="12">normalize IDs</tspan></text>
+              <text x="906" y="196"><tspan x="906">Generate</tspan><tspan x="906" dy="12">grounded reasons</tspan></text>
+              <text x="994" y="36"><tspan x="994">Review</tspan><tspan x="994" dy="12">queue</tspan></text>
+            </g>
+            <circle cx="1062" cy="40" r="12" fill="#fff" stroke="#176d70" stroke-width="3"/><circle cx="1062" cy="40" r="8" fill="none" stroke="#176d70" stroke-width="1"/><text x="1062" y="67" text-anchor="middle" font-size="9" fill="#334">End</text>
+          </svg>
         </div>
         <div class="diagram">
           <p class="diagram-label">Model deployment choices · catalog access always remains behind the API</p>
@@ -490,12 +569,42 @@
         <p>Local hosting can keep prompts and selected catalog rows on the operator's server, but still requires access controls, monitoring, secure storage, and sufficient CPU/GPU capacity. Cloud models add network dependence, provider availability and rate limits, latency, usage cost, terms/retention and data-residency review, model-version drift, and vendor dependence. The model provider receives only approved context; it never gets database credentials or a direct database connection.</p>
         <h3>Process B · Playlist-grounded discovery</h3>
         <div class="diagram">
-          <p class="diagram-label">Swimlanes · public playlist import to queue</p>
-          <div class="lanes">
-            <div class="lane"><div class="lane-name">Listener / browser</div><div class="activities"><span class="activity">Submit public URL</span><span class="activity">Review / save imported playlist</span><span class="activity">Request discovery</span><span class="activity">Exclude imported/recent tracks</span></div></div>
-            <div class="lane"><div class="lane-name">Local AI API</div><div class="activities"><span class="activity">Validate YouTube host and playlist ID</span><span class="activity">Fetch via yt-dlp</span><span class="activity">Normalize playlist entries</span><span class="activity">Skip redundant catalog plan when configured</span></div></div>
-            <div class="lane"><div class="lane-name">Catalog / Worker</div><div class="activities"><span class="activity">Find candidates when needed</span><span class="activity">Generate recommendations from playlist context</span></div></div>
-          </div>
+          <p class="diagram-label">BPMN swimlanes · sequence flow · public playlist to discovery queue</p>
+          <svg class="bpmn-svg" viewBox="0 0 1100 320" role="img" aria-label="BPMN process: listener submits a public playlist URL, API validates and fetches it using yt-dlp, normalizes entries, catalog identities are matched, the AI plans from playlist context, candidates are retrieved as needed, imported and recent tracks are excluded, the AI generates recommendations, and the listener reviews the queue.">
+            <title>Playlist-grounded discovery BPMN</title>
+            <desc>One start event, ten ordered tasks across listener, API, catalog, and AI lanes, and one end event. Arrows show sequence flow.</desc>
+            <defs><marker id="bpmn-arrow-b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#54706e"/></marker></defs>
+            <rect x="0" y="0" width="1100" height="80" fill="#edf4f3"/><rect x="0" y="80" width="1100" height="80" fill="#f8fbfa"/><rect x="0" y="160" width="1100" height="80" fill="#edf4f3"/><rect x="0" y="240" width="1100" height="80" fill="#f8fbfa"/>
+            <path d="M0 80H1100M0 160H1100M0 240H1100" stroke="#bfd1ce"/>
+            <text x="10" y="35" font-size="12" font-weight="700" fill="#174c4e"><tspan x="10">Listener /</tspan><tspan x="10" dy="15">browser</tspan></text>
+            <text x="10" y="115" font-size="12" font-weight="700" fill="#174c4e">Local API</text>
+            <text x="10" y="195" font-size="12" font-weight="700" fill="#174c4e"><tspan x="10">AI agent /</tspan><tspan x="10" dy="15">Worker</tspan></text>
+            <text x="10" y="275" font-size="12" font-weight="700" fill="#174c4e"><tspan x="10">Catalog /</tspan><tspan x="10" dy="15">DuckDB</tspan></text>
+            <g fill="none" stroke="#54706e" stroke-width="1.7" marker-end="url(#bpmn-arrow-b)">
+              <path d="M157 40H163"/><path d="M241 40H252V120H251"/><path d="M329 120H340V120H339"/><path d="M417 120H428V120H427"/><path d="M505 120H516V280H515"/><path d="M593 280H604V200H603"/><path d="M681 200H692V280H691"/><path d="M769 280H780V120H779"/><path d="M857 120H868V200H867"/><path d="M945 200H956V40H955"/><path d="M1033 40H1048"/>
+            </g>
+            <circle cx="145" cy="40" r="12" fill="#fff" stroke="#176d70" stroke-width="2"/><text x="145" y="67" text-anchor="middle" font-size="9" fill="#334">Start</text>
+            <g fill="#fff" stroke="#176d70" stroke-width="1.5">
+              <rect x="163" y="16" width="78" height="48" rx="7"/><rect x="251" y="96" width="78" height="48" rx="7"/>
+              <rect x="339" y="96" width="78" height="48" rx="7"/><rect x="427" y="96" width="78" height="48" rx="7"/>
+              <rect x="515" y="256" width="78" height="48" rx="7"/><rect x="603" y="176" width="78" height="48" rx="7"/>
+              <rect x="691" y="256" width="78" height="48" rx="7"/><rect x="779" y="96" width="78" height="48" rx="7"/>
+              <rect x="867" y="176" width="78" height="48" rx="7"/><rect x="955" y="16" width="78" height="48" rx="7"/>
+            </g>
+            <g text-anchor="middle" font-size="10" fill="#183b3c">
+              <text x="202" y="36"><tspan x="202">Submit</tspan><tspan x="202" dy="12">public URL</tspan></text>
+              <text x="290" y="116"><tspan x="290">Validate host</tspan><tspan x="290" dy="12">and playlist ID</tspan></text>
+              <text x="378" y="116"><tspan x="378">Fetch entries</tspan><tspan x="378" dy="12">with yt-dlp</tspan></text>
+              <text x="466" y="116"><tspan x="466">Normalize</tspan><tspan x="466" dy="12">playlist rows</tspan></text>
+              <text x="554" y="276"><tspan x="554">Match catalog</tspan><tspan x="554" dy="12">track IDs</tspan></text>
+              <text x="642" y="196"><tspan x="642">Plan from playlist</tspan><tspan x="642" dy="12">context</tspan></text>
+              <text x="730" y="276"><tspan x="730">Retrieve candidates</tspan><tspan x="730" dy="12">when needed</tspan></text>
+              <text x="818" y="116"><tspan x="818">Exclude imported</tspan><tspan x="818" dy="12">and recent tracks</tspan></text>
+              <text x="906" y="196"><tspan x="906">Generate</tspan><tspan x="906" dy="12">recommendations</tspan></text>
+              <text x="994" y="36"><tspan x="994">Review</tspan><tspan x="994" dy="12">discovery queue</tspan></text>
+            </g>
+            <circle cx="1062" cy="40" r="12" fill="#fff" stroke="#176d70" stroke-width="3"/><circle cx="1062" cy="40" r="8" fill="none" stroke="#176d70" stroke-width="1"/><text x="1062" y="67" text-anchor="middle" font-size="9" fill="#334">End</text>
+          </svg>
         </div>
         <p class="future">Target flow, not implemented: require recorded purpose-specific consent before import or persistence; preserve source order and a status/reason for every row; show duplicates, unsupported/incomplete rows, and ambiguous matches for listener review; use only reviewed rows to produce a corrected taste summary and queue. Explain each item with reviewed-playlist, confirmed-preference, or explicit catalog evidence, and enforce hard exclusions before returning the queue. The current normalizer does not itself establish these review or lineage guarantees.</p>
         <div class="diagram">
@@ -531,6 +640,52 @@
 
       <section id="s4">
         <h2>4. Data domains and conceptual model</h2>
+        <h3>Conceptual ERD · technology-independent</h3>
+        <p>This model names business concepts and their relationships without choosing a database product or prescribing physical tables.</p>
+        <div class="diagram">
+          <p class="diagram-label">Music catalog concepts · current source domains</p>
+          <div class="erd-entities proposed-grid">
+            <article class="erd-entity"><header>GENRE<small>Musical category</small></header></article>
+            <article class="erd-entity"><header>ALBUM<small>Released music collection</small></header></article>
+            <article class="erd-entity"><header>TRACK<small>Individual catalog recording</small></header></article>
+            <article class="erd-entity"><header>ARTIST<small>Credited music creator</small></header></article>
+            <article class="erd-entity extension"><header>ALBUM RATING<small>Optional critic/listener assessment</small></header></article>
+            <article class="erd-entity extension"><header>AUDIO FEATURES<small>Optional track characteristics</small></header></article>
+          </div>
+          <div class="erd-relations" aria-label="Technology-independent conceptual relationships">
+            <div class="erd-relation"><strong>GENRE</strong><span class="cardinality">1 ── 0..*</span><strong>ALBUM</strong></div>
+            <div class="erd-relation"><strong>GENRE</strong><span class="cardinality">1 ── 0..*</span><strong>TRACK</strong></div>
+            <div class="erd-relation"><strong>ALBUM</strong><span class="cardinality">1 ── 0..*</span><strong>TRACK</strong></div>
+            <div class="erd-relation"><strong>ALBUM</strong><span class="cardinality">1 ── 0..1</span><strong>ALBUM RATING</strong></div>
+            <div class="erd-relation"><strong>TRACK</strong><span class="cardinality">1 ── 0..1</span><strong>AUDIO FEATURES</strong></div>
+            <div class="erd-relation"><strong>TRACK</strong><span class="cardinality">0..* ── 0..*</span><strong>ARTIST</strong></div>
+            <div class="erd-relation"><strong>ARTIST</strong><span class="cardinality">0..* ── 0..*</span><strong>GENRE</strong></div>
+          </div>
+          <p class="relations">Tracks can have multiple credited artists, and artists can be credited on multiple tracks. Artist genre tags are also many-to-many. Ratings and audio features are optional extensions. The proposed demo listener profile supplies preference labels, not individual track history; persistent listener and playlist concepts are proposed separately below.</p>
+        </div>
+        <div class="diagram">
+          <p class="diagram-label">Target listener data concepts · proposed, not implemented</p>
+          <div class="erd-entities proposed-grid">
+            <article class="erd-entity proposed"><header>LISTENER<small>Authenticated person</small></header></article>
+            <article class="erd-entity proposed"><header>PROFILE<small>Listener-reviewed context</small></header></article>
+            <article class="erd-entity proposed"><header>PREFERENCE<small>Typed, confirmed taste</small></header></article>
+            <article class="erd-entity proposed"><header>PLAYLIST<small>Listener-selected source collection</small></header></article>
+            <article class="erd-entity proposed"><header>PLAYLIST ENTRY<small>Ordered source track and review outcome</small></header></article>
+            <article class="erd-entity proposed"><header>SAVED QUEUE<small>Queue explicitly saved by listener</small></header></article>
+            <article class="erd-entity proposed"><header>QUEUE ITEM<small>Ordered recommendation with reason</small></header></article>
+            <article class="erd-entity proposed"><header>USER EVENT<small>Asynchronous change history</small></header></article>
+          </div>
+          <div class="erd-relations" aria-label="Proposed conceptual listener relationships">
+            <div class="erd-relation"><strong>LISTENER</strong><span class="cardinality">1 ── 0..1</span><strong>PROFILE</strong></div>
+            <div class="erd-relation"><strong>LISTENER</strong><span class="cardinality">1 ── 0..*</span><strong>PREFERENCE</strong></div>
+            <div class="erd-relation"><strong>LISTENER</strong><span class="cardinality">1 ── 0..*</span><strong>PLAYLIST</strong></div>
+            <div class="erd-relation"><strong>PLAYLIST</strong><span class="cardinality">1 ── 0..*</span><strong>PLAYLIST ENTRY</strong></div>
+            <div class="erd-relation"><strong>LISTENER</strong><span class="cardinality">1 ── 0..*</span><strong>SAVED QUEUE</strong></div>
+            <div class="erd-relation"><strong>SAVED QUEUE</strong><span class="cardinality">1 ── 1..*</span><strong>QUEUE ITEM</strong></div>
+            <div class="erd-relation"><strong>LISTENER</strong><span class="cardinality">1 ── 0..*</span><strong>USER EVENT</strong></div>
+          </div>
+          <p class="relations">Saved queues become durable only on explicit Save. User events are an asynchronous history boundary, not the authoritative profile or queue store; catalog references use stable source track IDs rather than generated snapshot IDs.</p>
+        </div>
         <div class="diagram">
           <p class="diagram-label">Current catalog ERD · keys and cardinalities · implemented relational/Parquet model</p>
           <div class="erd-detail">
@@ -684,19 +839,19 @@
         <p>The Parquet catalog model above remains the canonical current data model. These diagrams provide a detailed relational view of the catalog and the proposed user-serving and conversation-memory schemas.</p>
         <div class="erd-domain">
           <h4>Current music catalog</h4>
-          <iframe class="erd-embed" src="./erd/current-catalog.html" title="Current music catalog entity-relationship diagram" loading="lazy"></iframe>
+          <iframe class="erd-embed current-catalog" src="./erd/current-catalog.html" title="Current music catalog entity-relationship diagram" loading="lazy"></iframe>
           <p class="erd-embed-link"><a href="./erd/current-catalog.html">Open the current catalog ERD</a></p>
         </div>
         <div class="erd-domain">
           <h4>Proposed user-serving schema</h4>
           <p>Proposed design; these tables are not currently implemented.</p>
-          <iframe class="erd-embed" src="./erd/user-serving.html" title="Proposed user-serving entity-relationship diagram" loading="lazy"></iframe>
+          <iframe class="erd-embed user-serving" src="./erd/user-serving.html" title="Proposed user-serving entity-relationship diagram" loading="lazy"></iframe>
           <p class="erd-embed-link"><a href="./erd/user-serving.html">Open the proposed user-serving ERD</a></p>
         </div>
         <div class="erd-domain">
           <h4>Proposed conversation-memory schema</h4>
           <p>Proposed design; persistent history is off by default and requires separate opt-in.</p>
-          <iframe class="erd-embed" src="./erd/conversation-memory.html" title="Proposed conversation-memory entity-relationship diagram" loading="lazy"></iframe>
+          <iframe class="erd-embed conversation-memory" src="./erd/conversation-memory.html" title="Proposed conversation-memory entity-relationship diagram" loading="lazy"></iframe>
           <p class="erd-embed-link"><a href="./erd/conversation-memory.html">Open the proposed conversation-memory ERD</a></p>
         </div>
         <h3>Observed inventory</h3>
@@ -774,7 +929,57 @@ track_artists(track_id PK/FK, artist_id PK/FK)
 artist_genres(artist_id PK/FK, genre_id PK/FK)</pre>
         <p>Foreign-key optionality is shown by “?” for album/genre IDs in the current DDL; transformation currently populates every track album ID. All descriptive columns are nullable in DDL. Composite bridge PKs prevent duplicate relationships. No deliberate denormalization is used in the relational core.</p>
         <h3>Data dictionary</h3>
-        <p>The complete dictionary is maintained in the <a href="./architecture.md#data-dictionary">Markdown version</a>: every attribute has a logical type, nullability, key role, meaning, and applicable rule. Summary: IDs and counts are integer; identifiers/titles/codes are text; popularity/scores/audio measurements are decimal; explicit is boolean. PK/FK relationships are identical to the logical model above.</p>
+        <p>Logical types abstract from product-specific syntax. Except keys, the current DDL does not declare non-null constraints or range checks; nullability therefore describes the schema, not whether this snapshot happens to contain a value. Business rule IDs are defined below.</p>
+        <div class="table-wrap data-dictionary"><table>
+          <thead><tr><th>Entity</th><th>Attribute</th><th>Logical type</th><th>Nullable?</th><th>Key role</th><th>Meaning / rule</th></tr></thead>
+          <tbody>
+            <tr><td>genre</td><td>genre_id</td><td>integer</td><td>No</td><td>PK</td><td>Snapshot-generated genre identifier; BR1</td></tr>
+            <tr><td>genre</td><td>genre_name</td><td>text</td><td>Yes</td><td>—</td><td>Display label selected from normalized variants; BR1</td></tr>
+            <tr><td>artists</td><td>artist_id</td><td>integer</td><td>No</td><td>PK</td><td>Snapshot-generated artist identifier; BR1</td></tr>
+            <tr><td>artists</td><td>artist_name</td><td>text</td><td>Yes</td><td>—</td><td>Selected display credit</td></tr>
+            <tr><td>artists</td><td>artist_country</td><td>text</td><td>Yes</td><td>—</td><td>MusicBrainz country preferred, Last.fm fallback</td></tr>
+            <tr><td>artists</td><td>artist_popularity</td><td>decimal</td><td>Yes</td><td>—</td><td>Last.fm listener count used as popularity proxy</td></tr>
+            <tr><td>album</td><td>album_id</td><td>integer</td><td>No</td><td>PK</td><td>Snapshot-generated album identifier; BR1/BR2</td></tr>
+            <tr><td>album</td><td>genre_id</td><td>integer</td><td>Yes</td><td>FK → genre.genre_id</td><td>Selected album/track genre; BR3</td></tr>
+            <tr><td>album</td><td>album_name</td><td>text</td><td>Yes</td><td>—</td><td>Album title</td></tr>
+            <tr><td>album</td><td>album_format</td><td>text</td><td>Yes</td><td>—</td><td>Source format</td></tr>
+            <tr><td>album</td><td>release_date</td><td>text</td><td>Yes</td><td>—</td><td>ISO-like year, year-month, or full date; BR4</td></tr>
+            <tr><td>album</td><td>label</td><td>text</td><td>Yes</td><td>—</td><td>Record label</td></tr>
+            <tr><td>tracks</td><td>track_id</td><td>text</td><td>No</td><td>PK</td><td>Source Spotify track ID; BR2</td></tr>
+            <tr><td>tracks</td><td>album_id</td><td>integer</td><td>Yes</td><td>FK → album.album_id</td><td>Current transform populates and asserts this reference</td></tr>
+            <tr><td>tracks</td><td>genre_id</td><td>integer</td><td>Yes</td><td>FK → genre.genre_id</td><td>Chosen genre; may be missing</td></tr>
+            <tr><td>tracks</td><td>track_name</td><td>text</td><td>Yes</td><td>—</td><td>Track title</td></tr>
+            <tr><td>tracks</td><td>popularity</td><td>integer</td><td>Yes</td><td>—</td><td>Maximum source popularity for duplicate track IDs; BR2</td></tr>
+            <tr><td>tracks</td><td>duration_ms</td><td>integer</td><td>Yes</td><td>—</td><td>Track duration in milliseconds</td></tr>
+            <tr><td>tracks</td><td>explicit</td><td>boolean</td><td>Yes</td><td>—</td><td>Source explicit-content flag</td></tr>
+            <tr><td>album_scores</td><td>album_id</td><td>integer</td><td>No</td><td>PK/FK → album.album_id</td><td>At most one chosen rating row per album; BR5</td></tr>
+            <tr><td>album_scores</td><td>metacritic_critic_score</td><td>decimal</td><td>Yes</td><td>—</td><td>Metacritic critic score</td></tr>
+            <tr><td>album_scores</td><td>metacritic_critic_count</td><td>integer</td><td>Yes</td><td>—</td><td>Metacritic critic review count</td></tr>
+            <tr><td>album_scores</td><td>metacritic_user_score</td><td>decimal</td><td>Yes</td><td>—</td><td>Metacritic user score</td></tr>
+            <tr><td>album_scores</td><td>metacritic_user_count</td><td>integer</td><td>Yes</td><td>—</td><td>Metacritic user review count</td></tr>
+            <tr><td>album_scores</td><td>aoty_critic_score</td><td>decimal</td><td>Yes</td><td>—</td><td>Album of the Year critic score</td></tr>
+            <tr><td>album_scores</td><td>aoty_critic_count</td><td>integer</td><td>Yes</td><td>—</td><td>Album of the Year critic review count</td></tr>
+            <tr><td>album_scores</td><td>aoty_user_score</td><td>decimal</td><td>Yes</td><td>—</td><td>Album of the Year user score</td></tr>
+            <tr><td>album_scores</td><td>aoty_user_count</td><td>integer</td><td>Yes</td><td>—</td><td>Album of the Year user review count</td></tr>
+            <tr><td>track_feel</td><td>track_id</td><td>text</td><td>No</td><td>PK/FK → tracks.track_id</td><td>At most one audio-feature row per track</td></tr>
+            <tr><td>track_feel</td><td>danceability</td><td>decimal</td><td>Yes</td><td>—</td><td>Source audio feature</td></tr>
+            <tr><td>track_feel</td><td>energy</td><td>decimal</td><td>Yes</td><td>—</td><td>Source audio feature</td></tr>
+            <tr><td>track_feel</td><td>key</td><td>integer</td><td>Yes</td><td>—</td><td>Source musical key</td></tr>
+            <tr><td>track_feel</td><td>loudness</td><td>decimal</td><td>Yes</td><td>—</td><td>Source loudness</td></tr>
+            <tr><td>track_feel</td><td>mode</td><td>integer</td><td>Yes</td><td>—</td><td>Source musical mode</td></tr>
+            <tr><td>track_feel</td><td>speechiness</td><td>decimal</td><td>Yes</td><td>—</td><td>Source audio feature</td></tr>
+            <tr><td>track_feel</td><td>acousticness</td><td>decimal</td><td>Yes</td><td>—</td><td>Source audio feature</td></tr>
+            <tr><td>track_feel</td><td>instrumentalness</td><td>decimal</td><td>Yes</td><td>—</td><td>Source audio feature</td></tr>
+            <tr><td>track_feel</td><td>liveness</td><td>decimal</td><td>Yes</td><td>—</td><td>Source audio feature</td></tr>
+            <tr><td>track_feel</td><td>valence</td><td>decimal</td><td>Yes</td><td>—</td><td>Source audio feature</td></tr>
+            <tr><td>track_feel</td><td>tempo</td><td>decimal</td><td>Yes</td><td>—</td><td>Source tempo</td></tr>
+            <tr><td>track_feel</td><td>time_signature</td><td>integer</td><td>Yes</td><td>—</td><td>Source time signature</td></tr>
+            <tr><td>track_artists</td><td>track_id</td><td>text</td><td>No</td><td>PK/FK → tracks.track_id</td><td>One credited track side of bridge</td></tr>
+            <tr><td>track_artists</td><td>artist_id</td><td>integer</td><td>No</td><td>PK/FK → artists.artist_id</td><td>One credited artist side of bridge</td></tr>
+            <tr><td>artist_genres</td><td>artist_id</td><td>integer</td><td>No</td><td>PK/FK → artists.artist_id</td><td>One artist/tag assignment</td></tr>
+            <tr><td>artist_genres</td><td>genre_id</td><td>integer</td><td>No</td><td>PK/FK → genre.genre_id</td><td>One artist/tag assignment</td></tr>
+          </tbody>
+        </table></div>
         <h3>Business rules</h3>
         <div class="table-wrap"><table>
           <thead><tr><th>ID</th><th>Rule</th><th>Enforcement</th></tr></thead>
@@ -858,7 +1063,22 @@ conversation_data.memory_source(
           </tbody>
         </table></div>
         <p><a href="../Indexing_Strategy.pdf">Indexing strategy PDF</a> recommends six indexes. <code>sql/indexed.sql</code> additionally creates <code>album_scores(metacritic_critic_score)</code>, an extra experiment not in that six-index recommendation. The report discusses index write/storage costs, especially track popularity updates.</p>
-        <p class="warning">The performance-assessment PDF currently parses as a zero-page/truncated file. SQL scripts contain index-disabled/indexed <code>EXPLAIN ANALYZE</code> queries, but this blueprint does not fabricate timings. Re-run on the target PostgreSQL instance and record plans, medians/p95, data version, warm/cold cache, and environment. PostgreSQL indexes do not index DuckDB's Parquet views.</p>
+        <h3>Exploratory PostgreSQL benchmark evidence</h3>
+        <p>One pass of each <code>EXPLAIN ANALYZE</code> query was run on 2026-10-16 against the loaded snapshot in PostgreSQL 15.17 (Docker, x86_64). Baseline forces sequential scans; the indexed run creates seven candidate indexes inside a transaction, then rolls them back. The scripts are <code>sql/baseline.sql</code> and <code>sql/indexed.sql</code>; the database is left unchanged.</p>
+        <div class="table-wrap benchmark"><table>
+          <thead><tr><th>Query</th><th>Baseline ms</th><th>Indexed ms</th><th>Observed plan / interpretation</th></tr></thead>
+          <tbody>
+            <tr><td>Q1 album track lookup</td><td>132.505</td><td>1.930</td><td>Composite track lookup index selected.</td></tr>
+            <tr><td>Q2 exact album</td><td>25.273</td><td>0.858</td><td>Composite album lookup and PK joins selected.</td></tr>
+            <tr><td>Q3 genre tracks</td><td>9.030</td><td>2.086</td><td>Bitmap scan uses genre/popularity index.</td></tr>
+            <tr><td>Q4 rated albums</td><td>13.792</td><td>3.813</td><td>Bitmap scans use album genre/date and critic-score indexes.</td></tr>
+            <tr><td>Q5 genre aggregate</td><td>99.791</td><td>244.123</td><td>Full scans/hash aggregate; no new index selected.</td></tr>
+            <tr><td>Q6 artist scores</td><td>219.800</td><td>300.708</td><td>Full scans/hash aggregates; no new index selected.</td></tr>
+            <tr><td>Q7 exact artist</td><td>2.032</td><td>0.190</td><td>Composite artist name/country index selected.</td></tr>
+            <tr><td>Q8 release range</td><td>15.720</td><td>11.788</td><td>Bitmap date index selected; range returns 6,262 albums.</td></tr>
+          </tbody>
+        </table></div>
+        <p class="warning">These are single-run observations, not controlled medians or p95 service measurements. Cache state was not controlled; treat Q5/Q6 variation as inconclusive, and repeat with alternating warm/cold runs before claiming causality or tuning further. The earlier performance-assessment PDF is truncated. PostgreSQL indexes do not index DuckDB's Parquet views.</p>
         <p>Consistency is manual/eventual: Parquet is authoritative; PostgreSQL may lag. DuckDB reads the snapshot at startup. There is no atomic multi-store update or HA claim. The local-only model option would require a generation-capable model, adequate hardware/throughput, runtime lifecycle and update management, and validation of structured output/tool selection; its performance and availability are not established.</p>
       </section>
 
@@ -945,6 +1165,30 @@ conversation_data.memory_source(
           </div>
         </div>
         <p>Capture provider-reported token counts only when available; Worker-side timing is end-to-end latency and does not expose provider internal compute. Telemetry may include invocation/trace ID, timestamp, provider/model/task, duration, outcome/error class, retry count, nullable usage and approved catalog-tool name/result count. Exclude prompts, completions, credentials, full catalog rows and user/account IDs. Do not use correlation IDs as metric labels. Instrumentation/export failure must not fail a successful recommendation; monitor telemetry delivery separately. Define sampling, retention, deletion, access and incident procedures before deployment.</p>
+        <h3>Source-to-target mapping</h3>
+        <div class="table-wrap mapping-table"><table>
+          <thead><tr><th>Source field(s)</th><th>Transformation</th><th>Target</th></tr></thead>
+          <tbody>
+            <tr><td><code>dataset.csv</code>: <code>track_id</code>, <code>track_name</code>, <code>popularity</code>, <code>duration_ms</code>, <code>explicit</code></td><td>Deduplicate by <code>track_id</code>; retain the maximum-popularity row.</td><td><code>tracks</code> identity and attributes</td></tr>
+            <tr><td><code>dataset.csv</code>: album title and artist credits</td><td>Normalize title/credit keys; combine album candidates and match ratings by title and credited artist.</td><td><code>album</code>; <code>track_artists</code>; generated <code>album_id</code></td></tr>
+            <tr><td><code>dataset.csv</code>: <code>track_genre</code></td><td>Normalize and choose modal track label; use rating genre for matched albums, otherwise modal linked-track genre.</td><td><code>genre.genre_name</code>; <code>tracks.genre_id</code>; <code>album.genre_id</code></td></tr>
+            <tr><td><code>dataset.csv</code>: danceability, energy, key, loudness, mode, speechiness, acousticness, instrumentalness, liveness, valence, tempo, time signature</td><td>Keep features from the selected highest-popularity unique track row.</td><td>Matching <code>track_feel</code> columns</td></tr>
+            <tr><td><code>album_ratings.csv</code>: title, artist, date parts, format, label, genre</td><td>Normalize; match by title and credited artist; retain unmatched; select most-complete duplicate; preserve partial date precision.</td><td><code>album</code> name, release date, format, label, and genre</td></tr>
+            <tr><td><code>album_ratings.csv</code>: Metacritic/AOTY scores and review counts</td><td>Rename source fields and select one chosen rating record per album.</td><td><code>album_scores</code></td></tr>
+            <tr><td><code>artists.csv</code>: MusicBrainz/Last.fm aliases and country</td><td>Match normalized aliases; choose highest listener-count/source-order match; prefer MusicBrainz country, then Last.fm.</td><td><code>artists</code> name, country, popularity</td></tr>
+            <tr><td><code>artists.csv</code>: MusicBrainz/Last.fm tags</td><td>Split semicolon tags, normalize genre keys, map and deduplicate pairs.</td><td><code>genre</code>; <code>artist_genres</code></td></tr>
+            <tr><td>Canonical Parquet columns</td><td>Validate exact column order/types and stream in bounded batches.</td><td>Corresponding PostgreSQL table columns</td></tr>
+            <tr><td><code>music_streaming_habits_2026.csv</code></td><td>Read-only fixture lookup; excluded from catalog transform and treated as synthetic demo data.</td><td>DuckDB demo-profile view; no catalog table or authenticated account</td></tr>
+            <tr><td>Seed artist/genre preferences</td><td>Resolve artists uniquely and map genres through a curated, versioned alias crosswalk; surface unmatched/ambiguous values.</td><td>Transient demo candidates; target preferences require trusted owner and catalog build mapping</td></tr>
+            <tr><td>Listener-corrected taste summary</td><td>Keep AI drafts request-scoped; persist only after listener review and approval, with version.</td><td>Target <code>user_profile</code> confirmed summary fields</td></tr>
+            <tr><td>Active recommendation queue</td><td>Keep transient until explicit Save; check consent; preserve build identity and bounded item-level evidence.</td><td>Target owner-scoped <code>saved_queue</code> and ordered <code>saved_queue_track</code> rows</td></tr>
+            <tr><td>Queue save/delete action</td><td>Commit queue state and minimal event envelope atomically; serialize asynchronously.</td><td>PostgreSQL <code>event_outbox</code> → Kafka lifecycle event</td></tr>
+            <tr><td>Target user-state mutation / Kafka event</td><td>Validate schema/version; partition by user; deduplicate by event ID; enforce retention/deletion.</td><td>PostgreSQL state/outbox → Kafka → restricted archive/projections</td></tr>
+            <tr><td>Target model invocation</td><td>Capture approved timing/outcome/retry metadata; exclude content and identity.</td><td>OpenTelemetry and separate telemetry topic → archive/Parquet</td></tr>
+            <tr><td>Target conversation message / aged topic</td><td>Store owner-scoped text with fixed expiry; summarize useful topics, embed/version, then purge source only after successful save.</td><td>PostgreSQL <code>conversation_data</code> and pgvector topic memory; no transcript Kafka/archive</td></tr>
+            <tr><td>Target conversation deletion/expiry</td><td>Delete messages, summaries, vectors, and provenance; expire backups/caches by policy.</td><td>Conversation deletion worker and verified backup/cache expiry</td></tr>
+          </tbody>
+        </table></div>
         <div class="table-wrap"><table>
           <thead><tr><th>Target</th><th>Freshness</th><th>Failure / limitation</th></tr></thead>
           <tbody>
@@ -1092,7 +1336,7 @@ conversation_data.memory_source(
           <li><a href="../../backend/duckdb_service.py">DuckDB service</a> · <a href="../../backend/main.py">AI API</a></li>
           <li><a href="../../transform_erd.py">CSV-to-Parquet transformation</a> · <a href="../../load_postgres.py">PostgreSQL backup loader</a></li>
           <li><a href="../../docker-compose.yml">Compose topology</a> · <a href="../../sql/benchmark.sql">Benchmark SQL</a></li>
-          <li><a href="../Indexing_Strategy.pdf">Indexing strategy</a> · <a href="../Query_Performance_Assessment_Final.pdf">Query performance assessment (currently unreadable/truncated)</a></li>
+          <li><a href="../Indexing_Strategy.pdf">Indexing strategy</a> · <a href="../Query_Performance_Assessment_Final.pdf">Original query performance assessment (truncated; exploratory measurements are summarized in Section 6)</a></li>
           <li><a href="../../README.md">Setup, user behavior, sources, and licensing</a></li>
         </ul>
         <p>All present-tense claims describe the repository evidence snapshot. Anything marked proposed, future, unmeasured, or not met should remain labeled that way until implementation or measurement changes.</p>

@@ -1038,18 +1038,37 @@ It calls out the write/storage cost, especially updates to indexed track
 popularity. See [`Indexing_Strategy.pdf`](../Indexing_Strategy.pdf) and its
 editable [`Indexing_Strategy.docx`](../Indexing_Strategy.docx).
 
-The query-performance assessment PDF is present but currently parses as a
-zero-page/truncated PDF, so it does not provide readable before/after measurements.
-The SQL scripts use `EXPLAIN ANALYZE` and `psql` timing, but no numeric timing
-results are asserted here. These indexes are PostgreSQL experiments and are
-**not** indexes on the Parquet-backed DuckDB views. For the primary DuckDB path,
-no secondary index is currently configured. Query planning/performance should be
-re-measured there as the catalog or access patterns grow.
+The original query-performance assessment PDF is present but currently parses as a
+zero-page/truncated PDF. One exploratory comparison of the queries was run locally
+on 2026-10-16; these new measurements are summarized below.
+The baseline disables index, bitmap, and index-only scans; the indexed run
+creates seven candidate indexes in a transaction and rolls it back. The
+database is left without benchmark indexes. Times below are PostgreSQL
+`EXPLAIN ANALYZE` execution times in milliseconds. These are PostgreSQL
+experiments, not indexes on the Parquet-backed DuckDB views.
 
-The current POC demonstrates the Parquet snapshot and working DuckDB tools, but a
-reproducible benchmark report should still record machine/runtime versions,
-dataset version, warm/cold cache behavior, repetitions, median/p95, plans, and
-whether the actual request uses DuckDB or PostgreSQL.
+| Query | Baseline ms | Indexed ms | Observed plan |
+|---|---:|---:|---|
+| Q1 album track lookup | 132.505 | 1.930 | Composite track lookup index selected |
+| Q2 exact album | 25.273 | 0.858 | Composite album lookup and PK joins selected |
+| Q3 genre tracks | 9.030 | 2.086 | Bitmap scan uses genre/popularity index |
+| Q4 rated albums | 13.792 | 3.813 | Bitmap scans use album genre/date and critic-score indexes |
+| Q5 genre aggregate | 99.791 | 244.123 | Full scans/hash aggregate; no new index selected |
+| Q6 artist scores | 219.800 | 300.708 | Full scans/hash aggregates; no new index selected |
+| Q7 exact artist | 2.032 | 0.190 | Composite artist name/country index selected |
+| Q8 release range | 15.720 | 11.788 | Bitmap date index selected; range returns 6,262 albums |
+
+These are single-run observations, not controlled medians or p95 service
+measurements. Cache state was not controlled, so Q5/Q6 variation is
+inconclusive; repeat with alternating warm/cold runs before claiming causality
+or tuning further. For the primary DuckDB path, no secondary index is currently
+configured; re-measure query planning/performance as the catalog or access
+patterns grow.
+
+The current POC demonstrates the Parquet snapshot and working DuckDB tools.
+A reproducible follow-up should record runtime versions and catalog build,
+control and alternate warm/cold runs, repeat queries, report medians/p95, capture
+plans, and distinguish whether the actual request uses DuckDB or PostgreSQL.
 
 ### Demo profile-to-catalog link
 
@@ -1066,9 +1085,6 @@ views. Only top artist, genre, and mood are shared with the model. Other profile
 attributes stay in the browser, and the selected fixture ID is not an authenticated
 user identity. For production, bind an authenticated principal to an owner-scoped
 PostgreSQL profile rather than accepting a browser-selected ID.
-does not have to be in one physical file or database. The existing DuckDB service
-would need a profile relation and a user-scoped lookup tool/API route before the
-AI can use it.
 
 For example, DuckDB can join a CSV profile relation directly to Parquet catalog
 files; no copy of the music catalog into PostgreSQL is needed:
