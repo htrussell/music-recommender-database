@@ -89,6 +89,39 @@ class DuckDBCatalogToolTests(unittest.TestCase):
 
         self.assertEqual(response["rows"], [])
 
+    def test_track_search_supports_stable_pagination(self) -> None:
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="search_tracks",
+                arguments={"limit": 1, "offset": 1},
+            )
+        )
+        self.assertEqual([row["catalog_track_id"] for row in response["rows"]], ["t2"])
+
+        with self.assertRaises(HTTPException):
+            duckdb_service.query_catalog(
+                duckdb_service.CatalogToolRequest(tool="search_tracks", arguments={"offset": -1})
+            )
+
+    def test_track_search_retains_all_credits_and_excludes_any_excluded_artist(self) -> None:
+        assert duckdb_service.connection is not None
+        duckdb_service.connection.execute(
+            "INSERT INTO track_artists VALUES ('t1', 2)"
+        )
+        matches = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="search_tracks", arguments={"artist": "Alice"}
+            )
+        )
+        self.assertEqual(matches["rows"][0]["artist"], "Alice, Bob")
+
+        excluded = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="search_tracks", arguments={"exclude_terms": ["Bob"]}
+            )
+        )
+        self.assertEqual(excluded["rows"], [])
+
     def test_demo_profile_maps_artist_and_genre_to_bounded_catalog_tracks(self) -> None:
         assert duckdb_service.connection is not None
         duckdb_service.connection.execute(

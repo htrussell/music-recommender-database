@@ -48,12 +48,12 @@
         // Preset Scenarios
         const SCENARIOS = {
             1: {
-                goal: "Find new indie and alternative music with atmospheric guitars and thoughtful lyrics, similar to my playlist, under 30 minutes.",
+                goal: "Find new indie and alternative music with atmospheric guitars and thoughtful lyrics, similar to my playlist.",
                 budget: 30,
                 exclusions: "country, holiday music"
             },
             2: {
-                goal: "Build a calm focus queue of ambient, downtempo, and instrumental electronic music similar to my playlist, under 30 minutes.",
+                goal: "Build a calm focus queue of ambient, downtempo, and instrumental electronic music similar to my playlist.",
                 budget: 30,
                 exclusions: "vocals, heavy metal"
             },
@@ -195,6 +195,9 @@
                 `;
                 return;
             }
+            const demoReferenceIds = new Set(
+                (DEMO_PROFILE?.tracks || []).map(track => `db:${track.catalog_track_id}`)
+            );
             tbody.innerHTML = CATALOG_ITEMS.map(item => `
                 <tr class="hover:bg-slate-800/50 transition">
                     <td class="p-2.5">
@@ -207,6 +210,7 @@
                     <td class="p-2.5 font-mono text-blue-400 font-medium text-[11px]">${escapeHtml(item.id)}</td>
                     <td class="p-2.5 font-medium text-slate-200">
                         ${escapeHtml(item.title)}
+                        ${demoReferenceIds.has(String(item.id)) ? '<span class="ml-1.5 bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center">Sample reference (excluded)</span>' : ''}
                         ${item.tags.includes("outside-discovery") || item.tags.includes("prompt-curated") ? '<span class="ml-1.5 bg-purple-900/60 text-purple-300 border border-purple-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center"><i class="fa-solid fa-sparkles text-purple-400 text-[8px] mr-1"></i>Prompt Match</span>' : ''}
                         ${item.tags.includes("budget-filler") ? '<span class="ml-1.5 bg-cyan-900/60 text-cyan-300 border border-cyan-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center"><i class="fa-solid fa-stopwatch text-cyan-400 text-[8px] mr-1"></i>Budget Fill</span>' : ''}
                         ${item.tags.includes("popular-track") ? '<span class="ml-1.5 bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center"><i class="fa-solid fa-fire text-amber-400 text-[8px] mr-1"></i>Popular Hit</span>' : ''}
@@ -254,10 +258,11 @@
         }
 
         function normalizeSongKey(title) {
-            return (title || "").toLowerCase()
+            return (title || "").normalize("NFKC").toLowerCase()
                 .replace(/\[[^\]]*\]|\([^)]*\)/g, " ")
+                .replace(/\s+[-–—]\s+(?:official\s+)?(?:\d{4}\s+)?(?:audio|(?:music\s+)?video|lyrics?|visualizer|remaster(?:ed)?|live|cover|instrumental|remix|version|edit)\b.*$/i, " ")
                 .replace(/\b(official|audio|video|lyrics?|lyric video|live|remaster(ed)?|visualizer|music video|hd|4k|extended|edit|version|remix|cover|instrumental|sped|slowed)\b/g, " ")
-                .replace(/[^a-z0-9]+/g, " ")
+                .replace(/[^\p{L}\p{N}]+/gu, " ")
                 .replace(/\s+/g, " ")
                 .trim();
         }
@@ -367,7 +372,7 @@
                 tags: [...track.tags, "playlist-seed", "taste-signal"]
             }));
             appendDemoProfileTracks();
-            document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} playlist tracks available as candidates`;
+            document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} catalog tracks loaded`;
             renderPlaylistHistory();
             renderCatalogTable();
             refreshChatContextDisplay();
@@ -515,6 +520,7 @@
                 sessionStorage.removeItem("goalModeListenerProfile");
                 sessionStorage.removeItem("goalModeListenerConsent");
                 sessionStorage.removeItem("goalModePreviouslyRecommended");
+                sessionStorage.removeItem("goalModePreviouslyRecommendedTracks");
             } catch (err) {
                 showToast(`Could not clear saved listener data: ${err.message}`, "error");
                 return;
@@ -560,6 +566,27 @@
             const ids = new Set(getPreviouslyRecommendedIds());
             recommendations.forEach(item => ids.add(item.content_id));
             sessionStorage.setItem("goalModePreviouslyRecommended", JSON.stringify([...ids]));
+            const tracks = getPreviouslyRecommendedTracks();
+            const knownIds = new Set(tracks.map(track => String(track.id)));
+            recommendations.forEach(recommendation => {
+                const item = CATALOG_ITEMS.find(candidate => String(candidate.id) === String(recommendation.content_id));
+                if (item && !knownIds.has(String(item.id))) {
+                    tracks.push({ id: String(item.id), title: item.title, artist: item.artist });
+                    knownIds.add(String(item.id));
+                }
+            });
+            sessionStorage.setItem("goalModePreviouslyRecommendedTracks", JSON.stringify(tracks));
+        }
+
+        function getPreviouslyRecommendedTracks() {
+            const tracks = JSON.parse(sessionStorage.getItem("goalModePreviouslyRecommendedTracks") || "[]");
+            if (!Array.isArray(tracks) || tracks.some(track =>
+                !track || typeof track.id !== "string" ||
+                typeof track.title !== "string" || typeof track.artist !== "string"
+            )) {
+                throw new Error("Saved recommendation history is invalid.");
+            }
+            return tracks;
         }
 
         function mergeDatabaseCatalogRows(rows) {
@@ -572,8 +599,16 @@
                 if (rawId === undefined || !title || !artist) continue;
 
                 const id = `db:${rawId}`;
-                if (CATALOG_ITEMS.some(item => item.id === id)) continue;
                 const durationMs = Number(row.duration_ms);
+                const existing = CATALOG_ITEMS.find(item => item.id === id);
+                if (existing) {
+                    if (Number.isFinite(durationMs) && durationMs > 0) {
+                        existing.durationMs = durationMs;
+                        existing.durationSeconds = durationMs / 1000;
+                        existing.duration = Math.max(1, Math.ceil(durationMs / 60000));
+                    }
+                    continue;
+                }
                 const duration = Number.isFinite(durationMs) && durationMs > 0
                     ? Math.max(1, Math.ceil(durationMs / 60000))
                     : 4;
@@ -593,7 +628,8 @@
                     artist: String(artist),
                     category: "Music",
                     duration,
-                    durationSeconds: durationMs > 0 ? Math.round(durationMs / 1000) : duration * 60,
+                    durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,
+                    durationSeconds: Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : duration * 60,
                     cover: "",
                     tags,
                     catalogMetadata: row
@@ -602,7 +638,7 @@
             }
             if (added) {
                 document.getElementById("catalogStatus").textContent =
-                    `${CATALOG_ITEMS.length} candidate songs (${added} matched from music database)`;
+                    `${CATALOG_ITEMS.length} catalog tracks (${added} matched from music database)`;
                 renderCatalogTable();
             }
         }
@@ -654,7 +690,8 @@
             const artistStatus = DEMO_PROFILE.artist_mapping_status;
             const genreStatus = DEMO_PROFILE.genre_mapping_status;
             const mappedGenre = DEMO_PROFILE.matched_genre?.genre_name;
-            status.textContent = `Loaded sample #${profile.listener_id}. Artist: ${artistStatus}; genre: ${genreStatus}${mappedGenre ? ` (${mappedGenre})` : ""}. ${DEMO_PROFILE.tracks.length} catalog matches added as candidates.`;
+            const noGenreReferences = genreStatus === "matched" && !DEMO_PROFILE.tracks.some(track => track.profile_match.includes("top_genre"));
+            status.textContent = `Loaded sample #${profile.listener_id}. Artist: ${artistStatus}; genre: ${genreStatus}${mappedGenre ? ` (${mappedGenre})` : ""}${noGenreReferences ? ", no genre references among these matches" : ""}. ${DEMO_PROFILE.tracks.length} catalog matches are taste references excluded from new queues.`;
             status.className = "text-[10px] text-emerald-300";
         }
 
@@ -792,37 +829,136 @@
             return normalizeSongKey(`${track.artist} ${track.title}`);
         }
 
+        function trackTitleKey(track) {
+            if (!track || typeof track.title !== "string") return "";
+            return normalizeSongKey(track.title) ||
+                track.title.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+        }
+
+        function trackTitleKeys(track) {
+            const keys = [trackTitleKey(track)];
+            if (!track || typeof track.title !== "string" || typeof track.artist !== "string") {
+                return keys.filter(Boolean);
+            }
+            const artist = trackTitleKey({ title: track.artist.replace(/\s+[-–—]\s+topic\s*$/i, "") });
+            const parts = track.title.split(/\s+[-–—]\s+/);
+            let prefixCount = 0;
+            while (
+                artist &&
+                prefixCount < parts.length - 1 &&
+                trackTitleKey({ title: parts[prefixCount] }) === artist
+            ) {
+                prefixCount += 1;
+            }
+            if (prefixCount) keys.push(trackTitleKey({ title: parts.slice(prefixCount).join(" - ") }));
+            return keys.filter(Boolean);
+        }
+
+        function playlistTitleKeys(track) {
+            const keys = [trackTitleKey(track)];
+            if (typeof track.title !== "string") return keys.filter(Boolean);
+            const parts = track.title.split(/\s+[-–—]\s+/);
+            if (parts.length >= 2) {
+                keys.push(...parts.map(title => trackTitleKey({ title })));
+            }
+            return keys.filter(Boolean);
+        }
+
+        function similarReferenceTitle(title, referenceTitles) {
+            const characters = Array.from(title);
+            if (characters.length < 8) return false;
+            for (const candidate of referenceTitles) {
+                const other = Array.from(candidate);
+                if (other.length < 8) continue;
+                const limit = Math.max(characters.length, other.length) >= 12 ? 2 : 1;
+                if (Math.abs(characters.length - other.length) > limit) continue;
+                let previous = Array.from(
+                    { length: other.length + 1 },
+                    (_, index) => index <= limit ? index : limit + 1
+                );
+                for (let i = 0; i < characters.length; i += 1) {
+                    const current = Array(other.length + 1).fill(limit + 1);
+                    if (i + 1 <= limit) current[0] = i + 1;
+                    let minimum = current[0];
+                    for (let j = Math.max(1, i + 1 - limit); j <= Math.min(other.length, i + 1 + limit); j += 1) {
+                        current[j] = Math.min(
+                            current[j - 1] + 1,
+                            previous[j] + 1,
+                            previous[j - 1] + (characters[i] === other[j - 1] ? 0 : 1)
+                        );
+                        minimum = Math.min(minimum, current[j]);
+                    }
+                    previous = current;
+                    if (minimum > limit) break;
+                }
+                if (previous[other.length] <= limit) return true;
+            }
+            return false;
+        }
+
+        function isExcludedTitle(title, exclusions) {
+            return Boolean(title) && (
+                exclusions.titles.has(title) ||
+                similarReferenceTitle(title, exclusions.referenceFuzzyTitles)
+            );
+        }
+
         function getRecommendationExclusions(ids = []) {
             const excludedIds = new Set(ids.map(id => String(id)));
             PLAYLIST_ITEMS.forEach(track => excludedIds.add(`playlist:${track.id}`));
+            const demoTracks = DEMO_PROFILE?.tracks || [];
+            demoTracks.forEach(track => excludedIds.add(`db:${track.catalog_track_id}`));
             const knownTracks = [
                 ...PLAYLIST_ITEMS,
+                ...demoTracks,
+                ...getPreviouslyRecommendedTracks().filter(track => excludedIds.has(track.id)),
                 ...CATALOG_ITEMS.filter(track => excludedIds.has(String(track.id)))
             ];
             const excludedIdentities = new Set(knownTracks.map(trackIdentityKey).filter(Boolean));
-            return { ids: excludedIds, identities: excludedIdentities };
+            const playlistTitles = new Set(PLAYLIST_ITEMS.flatMap(playlistTitleKeys));
+            const referenceFuzzyTitles = new Set(PLAYLIST_ITEMS.flatMap(track => {
+                const artist = trackTitleKey({
+                    title: typeof track.artist === "string"
+                        ? track.artist.replace(/\s+[-–—]\s+topic\s*$/i, "")
+                        : ""
+                });
+                return playlistTitleKeys(track).filter(title => title !== artist);
+            }));
+            demoTracks.flatMap(trackTitleKeys).forEach(title => referenceFuzzyTitles.add(title));
+            const excludedTitles = new Set([
+                ...playlistTitles,
+                ...knownTracks.flatMap(trackTitleKeys)
+            ]);
+            return { ids: excludedIds, identities: excludedIdentities, titles: excludedTitles, referenceFuzzyTitles };
         }
 
         function filterExcludedRecommendations(recommendations, exclusions) {
             const seenIds = new Set();
             const seenIdentities = new Set();
+            const seenTitles = new Set();
             return recommendations.filter(recommendation => {
                 const id = String(recommendation.content_id);
                 const item = CATALOG_ITEMS.find(candidate => String(candidate.id) === id);
                 const identity = item ? trackIdentityKey(item) : "";
+                const titles = item ? trackTitleKeys(item) : [];
                 if (
                     exclusions.ids.has(id) ||
                     (identity && exclusions.identities.has(identity)) ||
+                    titles.some(title => isExcludedTitle(title, exclusions)) ||
                     seenIds.has(id) ||
-                    (identity && seenIdentities.has(identity))
+                    (identity && seenIdentities.has(identity)) ||
+                    titles.some(title => seenTitles.has(title))
                 ) {
                     return false;
                 }
                 seenIds.add(id);
                 if (identity) seenIdentities.add(identity);
+                titles.forEach(title => seenTitles.add(title));
                 return true;
             });
         }
+
+        class InvalidAiResponseError extends Error {}
 
         async function fetchExternalDiscoveryTracks({
             goalText,
@@ -832,6 +968,7 @@
             existingIds,
             currentTracks = [],
             listenerContext = "",
+            attemptedTracks = [],
             task = "discovery"
         }) {
             const systemPrompt = `You are the Goal Mode AI Music Discovery Engine.
@@ -846,8 +983,8 @@ STRICT MANDATORY RULES:
 2. ZERO OFF-TOPIC TRACKS: Do NOT pad with unrelated music. Every single item must be 100% genuine and relevant to "${goalText}".
 3. STRICT EXCLUSIONS: Under NO circumstances include any artist, title, or genre matching EXCLUDED TOPICS: ${JSON.stringify(excludedTopics)}.
 4. REAL DURATIONS: Provide realistic durations (typically 3 to 5 minutes each).
-5. TARGET Duration Range: Return additional authentic tracks totaling as close as possible to ${budgetMins} minutes without exceeding it (typically ${Math.max(3, Math.ceil(budgetMins / 4))} tracks). A later pass may request fewer minutes to fill a verified shortfall.
-6. OUTPUT SIZE: Return only the tracks needed to approach the requested duration; do not add commentary outside the JSON object.
+5. TARGET Duration Range: Propose up to ${Math.min(30, Math.max(6, Math.ceil(budgetMins / 4) * 2))} distinct tracks so that catalog verification can discard mismatches; the application will select tracks that fit the ${budgetMins}-minute budget.
+6. OUTPUT SIZE: Do not add commentary outside the JSON object.
 7. DO NOT REPEAT tracks already selected for this playlist: ${JSON.stringify(currentTracks)}.
 
 Return ONLY a JSON object matching this schema:
@@ -871,6 +1008,7 @@ Preferred Topics: ${JSON.stringify(preferredTopics)}
 Explicit Excluded Topics: ${JSON.stringify(excludedTopics)}
 Previously Recommended / Existing IDs to avoid: ${JSON.stringify((existingIds || []).slice(0, 50))}
 Already selected tracks to avoid: ${JSON.stringify(currentTracks)}
+Previously attempted tracks to avoid: ${JSON.stringify(attemptedTracks)}
 ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
 `;
 
@@ -884,16 +1022,21 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                 });
                 const result = await requestAiJson(systemPrompt, userPrompt, task);
                 if (!Array.isArray(result.tracks)) {
-                    throw new Error("AI discovery response did not include a tracks array.");
+                    throw new InvalidAiResponseError("AI discovery response did not include a tracks array.");
                 }
                 if (result.tracks.some(track =>
                     !track ||
                     typeof track !== "object" ||
                     typeof track.title !== "string" ||
-                    typeof track.artist !== "string"
+                    !track.title.trim() ||
+                    track.title.length > 300 ||
+                    typeof track.artist !== "string" ||
+                    !track.artist.trim() ||
+                    track.artist.length > 300
                 )) {
-                    throw new Error("AI discovery response included an invalid track.");
+                    throw new InvalidAiResponseError("AI discovery response included an invalid track.");
                 }
+                attemptedTracks.push(...result.tracks.map(track => `${track.artist} - ${track.title}`));
 
                 const verificationResponse = await fetch("/api/catalog/verify-tracks", {
                     method: "POST",
@@ -916,6 +1059,7 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                 mergeDatabaseCatalogRows(verificationData.tracks);
                 const seenIds = new Set();
                 const seenIdentities = new Set();
+                const seenTitles = new Set();
                 return verificationData.tracks.flatMap(verifiedTrack => {
                     const id = `db:${verifiedTrack.catalog_track_id}`;
                     const item = CATALOG_ITEMS.find(candidate => candidate.id === id);
@@ -923,17 +1067,24 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                         throw new Error("A catalog-verified track could not be loaded into the candidate catalog.");
                     }
                     const identity = trackIdentityKey(item);
+                    const titles = trackTitleKeys(item);
                     if (
                         exclusions.ids.has(id) ||
                         exclusions.ids.has(String(verifiedTrack.catalog_track_id)) ||
                         (identity && exclusions.identities.has(identity)) ||
+                        titles.some(title => isExcludedTitle(title, exclusions)) ||
                         seenIds.has(id) ||
-                        (identity && seenIdentities.has(identity))
+                        (identity && seenIdentities.has(identity)) ||
+                        titles.some(title => seenTitles.has(title))
                     ) {
                         return [];
                     }
                     seenIds.add(id);
                     if (identity) seenIdentities.add(identity);
+                    titles.forEach(title => {
+                        seenTitles.add(title);
+                        exclusions.titles.add(title);
+                    });
                     item.tags = [...new Set([...item.tags, "outside-discovery", "prompt-curated"])];
                     item.isDiscoveredMatch = true;
                     return [{
@@ -945,92 +1096,6 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                 });
             } catch (err) {
                 console.error("Failed to query external discovery tracks:", err);
-                throw err;
-            }
-        }
-
-        async function fetchBudgetFillerTracks({ goalText, remainingBudget, totalBudget, preferredTopics, excludedTopics, existingIds, currentTracks }) {
-            const systemPrompt = `You are the Goal Mode AI Duration & Budget Engine.
-The listener's current audio queue has not reached their requested time budget of ${totalBudget} minutes.
-Your task is to curate additional high-quality, authentic tracks to fill the remaining ${remainingBudget} minutes of listening time without exceeding it.
-
-STRICT MANDATORY RULES:
-1. STRICT THEME & FRANCHISE CONSISTENCY: Every single track MUST directly and specifically belong to the listener's prompt: "${goalText}". If the goal mentions a specific franchise, anime, artist, or series (e.g., Monogatari, Ghibli, Zelda, classical), ALL filler tracks MUST strictly come from that exact franchise, series, or style. Absolutely NO random or generic filler songs from outside this theme.
-2. Under NO circumstances select any artist, track, or genre matching EXCLUDED TOPICS: ${JSON.stringify(excludedTopics)}.
-3. Realistic individual track durations (typically 3 to 5 minutes each).
-4. TARGET SUM OF DURATIONS: The sum of durations of your selected filler tracks should be as close to ${remainingBudget} minutes as possible, and MUST NOT exceed ${remainingBudget} minutes.
-5. Do NOT repeat any tracks already in the playlist, queue, or candidate pool: ${JSON.stringify((existingIds || []).slice(0, 50))}.
-
-Return ONLY a JSON object matching this schema:
-{
-  "tracks": [
-    {
-      "title": "Exact Song/Piece Title",
-      "artist": "Exact Artist or Composer Name",
-      "duration_minutes": 4,
-      "tags": ["genre", "style"],
-      "reason": "1-sentence reason why this authentic track belongs to the requested prompt and rounds out the duration"
-    }
-  ]
-}`;
-
-            const userPrompt = `
-GOAL: "${goalText}"
-PREFERRED TOPICS: ${JSON.stringify(preferredTopics)}
-EXCLUDED TOPICS: ${JSON.stringify(excludedTopics)}
-REMAINING TIME BUDGET TO FILL: ${remainingBudget} minutes (Total Target: ${totalBudget} minutes)
-CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
-`;
-
-            try {
-                const result = await requestAiJson(systemPrompt, userPrompt, "discovery");
-                if (!Array.isArray(result.tracks)) {
-                    throw new Error("AI budget response did not include a tracks array.");
-                }
-                if (result.tracks.some(track =>
-                    !track ||
-                    typeof track !== "object" ||
-                    typeof track.title !== "string" ||
-                    typeof track.artist !== "string"
-                )) {
-                    throw new Error("AI budget response included an invalid track.");
-                }
-                
-                let accumulatedMinutes = 0;
-                const fillerTracks = [];
-                const exclusions = getRecommendationExclusions(existingIds || []);
-                (currentTracks || []).forEach(trackName => {
-                    const identity = typeof trackName === "string"
-                        ? normalizeSongKey(trackName)
-                        : trackIdentityKey(trackName);
-                    if (identity) exclusions.identities.add(identity);
-                });
-
-                for (const track of result.tracks) {
-                    const dur = Math.min(20, Math.max(1, parseInt(track.duration_minutes) || 4));
-                    const identity = trackIdentityKey(track);
-                    if (!identity || exclusions.identities.has(identity) || accumulatedMinutes + dur > remainingBudget) continue;
-                    const id = `filler:${normalizeSongKey(track.artist + " " + track.title)}`;
-                    if (exclusions.ids.has(id)) continue;
-                    exclusions.identities.add(identity);
-                    exclusions.ids.add(id);
-                    accumulatedMinutes += dur;
-                    fillerTracks.push({
-                        id: id,
-                        title: track.title,
-                        artist: track.artist,
-                        category: "Music",
-                        duration: dur,
-                        durationSeconds: dur * 60,
-                        cover: "",
-                        tags: ["budget-filler", "prompt-curated", ...(track.tags || [])],
-                        reason: track.reason,
-                        isBudgetFiller: true
-                    });
-                }
-                return fillerTracks;
-            } catch (err) {
-                console.error("Failed to query budget filler tracks:", err);
                 throw err;
             }
         }
@@ -1063,7 +1128,7 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
                             CATALOG_ITEMS.unshift(t);
                         }
                     });
-                    document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} candidate songs (${discovered.length} loaded from prompt)`;
+                    document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} catalog tracks (${discovered.length} loaded from prompt)`;
                     renderCatalogTable();
                     showToast(`Loaded ${discovered.length} songs for "${goalText}" into candidate catalog!`, "success");
                 } else {
@@ -1074,318 +1139,249 @@ CURRENT QUEUE PREVIEWS: ${JSON.stringify((currentTracks || []).slice(0, 10))}
             }
         }
 
+        async function fetchCatalogCandidates(goal, excludeTerms, offset = 0) {
+            const response = await fetch("/api/catalog/candidates", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ goal, exclude_terms: excludeTerms, offset })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || `Catalog search failed with HTTP ${response.status}.`);
+            if (
+                !Array.isArray(data.goal_candidates) ||
+                !Array.isArray(data.fallback_candidates) ||
+                (data.next_offset !== null && (!Number.isInteger(data.next_offset) || data.next_offset <= offset))
+            ) {
+                throw new Error("The catalog returned an invalid candidate page.");
+            }
+            return data;
+        }
+
+        function trackDurationMs(item) {
+            if (Number.isFinite(item.durationMs) && item.durationMs > 0) return item.durationMs;
+            if (Number.isFinite(item.durationSeconds) && item.durationSeconds > 0) return item.durationSeconds * 1000;
+            return item.duration * 60000;
+        }
+
+        function formatDuration(durationMs) {
+            const seconds = Math.floor(durationMs / 1000);
+            return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+        }
+
         async function generateGoalQueue() {
             if (!hasListenerConsent()) return;
             const goalText = document.getElementById("goalTextInput").value.trim();
-            const budgetMins = parseInt(document.getElementById("budgetInput").value) || 30;
-            const explicitExclusions = document.getElementById("exclusionsInput").value.trim();
+            const budgetMins = Number(document.getElementById("budgetInput").value);
+            const excludedTopics = document.getElementById("exclusionsInput").value
+                .split(",").map(topic => topic.trim()).filter(Boolean);
             const listenerTasteSummary = document.getElementById("listenerTasteSummary").value.trim();
             const listenerPreferences = document.getElementById("listenerExplicitPreferences").value.trim();
-            const previouslyRecommendedIds = getPreviouslyRecommendedIds();
-            playlistPreferenceSummary = listenerTasteSummary || playlistPreferenceSummary;
-
             if (!goalText) {
                 showToast("Please enter a listening goal description.", "warning");
                 document.getElementById("goalTextInput").focus();
                 return;
             }
-
-            setLoading(true);
-
-            // Only an imported seed playlist selects playlist-grounded mode.
-            const isPlaylistGrounded = PLAYLIST_ITEMS.length > 0;
-
-            if (!isPlaylistGrounded) {
-                document.getElementById("loadingStateTitle").textContent = "Direct Prompt Mode: Curating authentic tracks for your goal...";
-                document.getElementById("loadingStateSubtitle").textContent = "Generating, verifying, and filling matching tracks";
-            } else {
-                document.getElementById("loadingStateTitle").textContent = "Parsing goal & evaluating candidate pool...";
-                document.getElementById("loadingStateSubtitle").textContent = "Enforcing budget constraints & topic exclusions";
+            if (!Number.isInteger(budgetMins) || budgetMins < 1 || budgetMins > 120) {
+                showToast("Enter a duration from 1 to 120 minutes.", "warning");
+                return;
+            }
+            if (excludedTopics.length > 20 || excludedTopics.some(topic => topic.length > 100)) {
+                showToast("Use at most 20 exclusions of 100 characters each.", "warning");
+                return;
             }
 
-            const exclusionTokens = explicitExclusions.toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
-            const recommendationExclusions = getRecommendationExclusions(previouslyRecommendedIds);
-            let eligibleCandidates = CATALOG_ITEMS.filter(item => {
-                const identity = trackIdentityKey(item);
-                if (
-                    recommendationExclusions.ids.has(String(item.id)) ||
-                    (identity && recommendationExclusions.identities.has(identity))
-                ) {
-                    return false;
+            let exclusions;
+            try {
+                exclusions = getRecommendationExclusions(getPreviouslyRecommendedIds());
+            } catch (err) {
+                showToast(`Could not read recommendation history: ${err.message}`, "error");
+                return;
+            }
+            setLoading(true);
+            document.getElementById("loadingStateTitle").textContent = "Finding catalog tracks for your goal...";
+            document.getElementById("loadingStateSubtitle").textContent = "Ranking goal matches, then filling with eligible tracks";
+            const targetMs = budgetMins * 60000;
+            const exclusionTokens = excludedTopics.map(topic => topic.toLowerCase());
+            const candidates = [];
+            const seenIds = new Set();
+            const seenTitles = new Set();
+            const selectedIds = new Set();
+            const recommendations = [];
+            const stats = { proposed: 0, verified: 0, excluded: 0, ai_proposed: 0, ai_ranked: 0, search_fill: 0, broad_fill: 0 };
+            let totalMs = 0;
+            let rankingError = "";
+            let catalogError = "";
+
+            function addRows(rows, source) {
+                const validRows = [];
+                for (const row of rows) {
+                    if (!row || (typeof row.catalog_track_id !== "string" && typeof row.catalog_track_id !== "number")) {
+                        throw new Error("The catalog returned a track without a valid ID.");
+                    }
+                    const id = `db:${row.catalog_track_id}`;
+                    if (seenIds.has(id)) continue;
+                    seenIds.add(id);
+                    stats.proposed += 1;
+                    const durationMs = Number(row.duration_ms);
+                    if (
+                        typeof row.title !== "string" || !row.title.trim() ||
+                        typeof row.artist !== "string" || !row.artist.trim() ||
+                        !Number.isFinite(durationMs) || durationMs <= 0
+                    ) continue;
+                    stats.verified += 1;
+                    validRows.push(row);
                 }
-                if (!exclusionTokens.length) return true;
-                const searchText = `${item.title} ${item.artist} ${item.tags.join(" ")}`.toLowerCase();
-                return !exclusionTokens.some(ex => searchText.includes(ex));
-            });
+                mergeDatabaseCatalogRows(validRows);
+                for (const row of validRows) {
+                    const item = CATALOG_ITEMS.find(candidate => candidate.id === `db:${row.catalog_track_id}`);
+                    if (item && exclusions.ids.has(String(item.id))) {
+                        const identity = trackIdentityKey(item);
+                        if (identity) exclusions.identities.add(identity);
+                        trackTitleKeys(item).forEach(title => exclusions.titles.add(title));
+                    }
+                }
+                for (const row of validRows) {
+                    const item = CATALOG_ITEMS.find(candidate => candidate.id === `db:${row.catalog_track_id}`);
+                    if (!item) throw new Error("A catalog candidate could not be loaded.");
+                    const titles = trackTitleKeys(item);
+                    const identity = trackIdentityKey(item);
+                    const searchText = `${item.title} ${item.artist} ${item.tags.join(" ")}`.toLowerCase();
+                    if (
+                        exclusions.ids.has(String(item.id)) ||
+                        (identity && exclusions.identities.has(identity)) ||
+                        titles.some(title => isExcludedTitle(title, exclusions) || seenTitles.has(title)) ||
+                        exclusionTokens.some(topic => searchText.includes(topic))
+                    ) {
+                        stats.excluded += 1;
+                        continue;
+                    }
+                    titles.forEach(title => seenTitles.add(title));
+                    candidates.push({ item, source });
+                }
+            }
 
-            eligibleCandidates = eligibleCandidates.slice(0, 40);
-
-            const compactCatalogPrompt = eligibleCandidates.length 
-                ? eligibleCandidates.map(c => `ID: "${c.id}" | ${c.title} - ${c.artist} | ${c.duration}m | Tags: ${c.tags.slice(0, 3).join(", ")}`).join("\n")
-                : "No eligible new candidates are available; discover new tracks instead of reusing excluded songs.";
-
-            const chatInsightsText = CONFIRMED_TASTE_INSIGHTS.length
-                ? `\nLISTENER-CONFIRMED PREFERENCES FROM CONVERSATIONAL AI CHAT:\n${CONFIRMED_TASTE_INSIGHTS.map(t => `- ${t}`).join("\n")}`
-                : "None recorded yet";
-            const demoTasteContext = getDemoTasteContext();
-            const demoCatalogContext = getDemoCatalogContext();
-
-            const systemPrompt = `You are the Goal Mode AI Recommendation Engine.
-Your job is to parse listener goals, evaluate candidate suitability from the candidate catalog (if available), and assemble the optimal audio queue.
-
-CRITICAL 100% RELEVANCE & ZERO IRRELEVANT FILLER RULES:
-1. 100% THEMATIC RELEVANCE ONLY: Only select candidate items if they GENUINELY, DIRECTLY, and AUTHENTICALLY match the listener's specific goal (e.g. if the user asks for "songs from the monogatari series", ONLY select songs that actually belong to the Monogatari series; NEVER select unrelated indie, pop, or rock songs).
-2. CONVERSATIONAL TASTE INTEGRATION: Actively honor and incorporate only listener-confirmed preferences from AI Taste Chat.
-2a. LISTENER PROFILE: Incorporate the listener-approved taste summary and explicit preferences when choosing tracks.
-2b. DEMO PROFILE: Treat the loaded sample's top artist, top genre, and top mood as soft taste signals; the current goal and explicit exclusions take priority.
-3. ZERO UNRELATED BACKFILLING: If the candidate catalog only has 1 or 2 songs that genuinely match, select ONLY those matching songs. NEVER force-fit unrelated catalog songs just to fill the budget!
-4. PROMPT-DRIVEN EXPANSION: If no candidates exist, or if the user's prompt requests a specific franchise, soundtrack, artist, or style that is NOT fully populated in the candidate catalog, or if qualified candidates cannot fill at least 80% of the ${budgetMins}-minute budget, set "needs_external_discovery": true and "status": "needs_prompt_expansion".
-5. STRICT EXCLUSIONS: Under no circumstances select any item matching EXPLICIT EXCLUSIONS or the imported playlist / previously recommended tracks listed below.
-6. GOAL PRIORITY: Override historical preferences when they conflict with the user's goal.
-
-Return valid JSON strictly matching schema:
-{
-  "normalized_goal": "1-sentence summary of the parsed user goal",
-  "specific_franchise_or_artist": "Name of franchise/artist/theme if specific, else null",
-  "preferred_topics": ["array", "of", "preferred", "topics"],
-  "excluded_topics": ["array", "of", "explicitly", "excluded", "topics"],
-  "budget_minutes": ${budgetMins},
-  "needs_external_discovery": true | false,
-  "ai_comment": "Brief comment explaining candidate evaluation or what prompt-specific songs need to be loaded",
-  "recommendations": [{"content_id": "EXACT_ID", "reason": "1-sentence reason why this strictly matches the goal"}],
-  "status": "ok" | "outside_discovery" | "needs_prompt_expansion" | "clarify" | "no_match"
-}`;
-
-            const userPrompt = `
-LISTENER INPUT:
-Goal: "${goalText}"
-Budget: ${budgetMins} minutes
-Explicit Exclusions: "${explicitExclusions}"
-Listener-Approved Taste Summary: "${listenerTasteSummary || "None"}"
-Listener-Provided Preferences: "${listenerPreferences || "None"}"
-Loaded demo-profile taste signals (sample data): ${demoTasteContext}
-Matched catalog examples from the demo profile (use only when relevant to the goal): ${demoCatalogContext}
-Previously Recommended IDs (AVOID): ${JSON.stringify(previouslyRecommendedIds.slice(0, 30))}
-Imported Playlist Tracks to Exclude: ${JSON.stringify(PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`).slice(0, 40))}
-Playlist Style Summary: ${playlistPreferenceSummary || "None (Direct prompt curation)"}
-${chatInsightsText}
-
-CANDIDATE POOL (Compact Format):
-${compactCatalogPrompt}
-`;
+            function selectCandidate(candidate, reason, source) {
+                const item = candidate.item;
+                if (selectedIds.has(item.id) || totalMs >= targetMs) return;
+                selectedIds.add(item.id);
+                totalMs += trackDurationMs(item);
+                stats[source] += 1;
+                recommendations.push({ content_id: item.id, reason, source });
+            }
 
             try {
-                let parsedData;
-                if (!isPlaylistGrounded) {
-                    const excludedTopics = explicitExclusions.split(",").map(topic => topic.trim()).filter(Boolean);
-                    const listenerContext = [
-                        `Listener-approved taste summary: ${listenerTasteSummary || "None"}`,
-                        `Listener-provided preferences: ${listenerPreferences || "None"}`,
-                        `Loaded demo-profile taste signals (top artist, genre, and mood only): ${demoTasteContext}`,
-                        `Profile-matched catalog examples (use only when relevant): ${demoCatalogContext}`,
-                        `Listener-confirmed chat preferences: ${CONFIRMED_TASTE_INSIGHTS.join("; ") || "None"}`
+                const preloadedRows = CATALOG_ITEMS.filter(item => item.isDiscoveredMatch && item.catalogMetadata)
+                    .map(item => item.catalogMetadata);
+                let page = await fetchCatalogCandidates(goalText, excludedTopics);
+                addRows(page.goal_candidates, "search");
+                addRows(preloadedRows, "fallback");
+                addRows(page.fallback_candidates, "fallback");
+
+                const systemPrompt = `Rank catalog tracks for the listener's goal. The goal has priority over profile and playlist taste signals.
+Return only tracks that plausibly match the goal, ranked best first. Select only exact IDs from the candidate list.
+Do not invent tracks or select reference tracks. If none match, return an empty array.
+Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief goal-specific reason"}]}.`;
+                for (let pass = 0; pass < 3 && totalMs < targetMs; pass += 1) {
+                    const pool = candidates.filter(candidate => !selectedIds.has(candidate.item.id)).slice(0, 40);
+                    if (!pool.length) break;
+                    const userPrompt = [
+                        `Goal: ${goalText}`,
+                        `Explicit exclusions: ${excludedTopics.join(", ") || "None"}`,
+                        `Listener taste summary: ${listenerTasteSummary || "None"}`,
+                        `Listener preferences: ${listenerPreferences || "None"}`,
+                        `Sample taste signals: ${getDemoTasteContext()}`,
+                        `Confirmed chat preferences: ${CONFIRMED_TASTE_INSIGHTS.join("; ") || "None"}`,
+                        `Playlist examples (taste references only): ${JSON.stringify(PLAYLIST_ITEMS.slice(0, 20).map(track => `${track.artist} - ${track.title}`))}`,
+                        `Remaining target: ${formatDuration(targetMs - totalMs)}`,
+                        `Catalog candidates: ${JSON.stringify(pool.map(({ item }) => ({
+                            id: item.id, title: item.title, artist: item.artist,
+                            duration_seconds: item.durationSeconds, tags: item.tags.slice(0, 5)
+                        })))}`
                     ].join("\n");
-                    const excludedTokens = excludedTopics.map(topic => topic.toLowerCase()).filter(Boolean);
-                    const knownIds = new Set([
-                        ...previouslyRecommendedIds,
-                        ...PLAYLIST_ITEMS.map(track => `playlist:${track.id}`)
-                    ].map(String));
-                    const recommendations = [];
-                    let totalMinutes = 0;
-                    const selectedTrackNames = [];
-                    let refillError = "";
-                    const maxDiscoveryPasses = 3;
-
-                    for (let pass = 0; pass < maxDiscoveryPasses; pass += 1) {
-                        const remainingBudget = budgetMins - totalMinutes;
-                        if (remainingBudget <= 0) break;
-
-                        let promptTracks;
-                        try {
-                            promptTracks = await fetchExternalDiscoveryTracks({
-                                goalText,
-                                budgetMins: remainingBudget,
-                                preferredTopics: [goalText],
-                                excludedTopics,
-                                existingIds: [...knownIds],
-                                currentTracks: selectedTrackNames,
-                                listenerContext,
-                                task: "discovery"
-                            });
-                        } catch (err) {
-                            if (recommendations.length === 0) throw err;
-                            console.error("Could not refill the verified playlist:", err);
-                            refillError = err.message;
-                            break;
+                    try {
+                        const result = await requestAiJson(systemPrompt, userPrompt, "recommendation", true);
+                        if (!Array.isArray(result.recommendations) || result.recommendations.some(recommendation =>
+                            !recommendation || typeof recommendation !== "object" ||
+                            (typeof recommendation.content_id !== "string" && typeof recommendation.content_id !== "number")
+                        )) {
+                            throw new InvalidAiResponseError("AI ranking response included an invalid recommendations array.");
                         }
-
-                        for (const track of promptTracks) {
-                            if (knownIds.has(track.id)) continue;
-                            knownIds.add(track.id);
-                            const searchText = `${track.title} ${track.artist} ${track.tags.join(" ")}`.toLowerCase();
-                            if (excludedTokens.some(topic => searchText.includes(topic))) continue;
-                            if (totalMinutes + track.duration > budgetMins) continue;
-
-                            totalMinutes += track.duration;
-                            selectedTrackNames.push(`${track.artist} - ${track.title}`);
-                            if (!CATALOG_ITEMS.some(item => item.id === track.id)) {
-                                CATALOG_ITEMS.unshift(track);
-                            }
-                            recommendations.push({
-                                content_id: track.id,
-                                reason: track.reason || `Directly matched to "${goalText}".`
-                            });
+                        const ranked = normalizeRecommendations(result.recommendations);
+                        rankingError = "";
+                        stats.ai_proposed += ranked.length;
+                        const byId = new Map(pool.map(candidate => [candidate.item.id, candidate]));
+                        for (const recommendation of ranked) {
+                            const candidate = byId.get(String(recommendation.content_id));
+                            if (!candidate) continue;
+                            const reason = typeof recommendation.reason === "string" && recommendation.reason.trim()
+                                ? recommendation.reason
+                                : "AI ranked this catalog track for the listening goal.";
+                            selectCandidate(candidate, reason, "ai_ranked");
                         }
-
-                        if (totalMinutes >= budgetMins) break;
-                    }
-
-                    if (recommendations.length) {
-                        document.getElementById("catalogStatus").textContent =
-                            `${CATALOG_ITEMS.length} candidate songs (${recommendations.length} verified tracks loaded from prompt)`;
-                        renderCatalogTable();
-                    }
-                    const filledBudget = totalMinutes >= budgetMins;
-                    parsedData = {
-                        normalized_goal: goalText,
-                        preferred_topics: [goalText],
-                        excluded_topics: excludedTopics,
-                        recommendations,
-                        status: recommendations.length ? "discovered_match" : "no_match",
-                        ai_comment: recommendations.length
-                            ? `Curated ${recommendations.length} catalog-verified tracks (${totalMinutes}/${budgetMins} minutes).${filledBudget ? "" : " The catalog did not provide enough unambiguous matching tracks to fill the full duration."}${refillError ? ` Additional-track request failed: ${refillError}` : ""}`
-                            : "No new catalog-verified tracks matched the request and exclusions."
-                    };
-                    renderResults(parsedData, budgetMins);
-                    if (filledBudget) {
-                        showToast(`Goal Queue filled (${totalMinutes}/${budgetMins} minutes).`, "success");
-                    } else if (recommendations.length) {
-                        showToast(`Added ${recommendations.length} verified tracks (${totalMinutes}/${budgetMins} minutes); there were not enough unambiguous catalog matches to fill the target.`, "warning");
-                    } else {
-                        showToast("No new catalog-verified tracks matched the request.", "warning");
-                    }
-                    return;
-                }
-
-                parsedData = await requestAiJson(systemPrompt, userPrompt, "recommendation", true);
-
-                let currentRecs = filterExcludedRecommendations(
-                    normalizeRecommendations(parsedData.recommendations),
-                    recommendationExclusions
-                );
-                parsedData.recommendations = currentRecs;
-                let currentDuration = currentRecs.reduce((sum, rec) => {
-                    const item = CATALOG_ITEMS.find(c => c.id === rec.content_id);
-                    return sum + (item ? (item.duration || 4) : 4);
-                }, 0);
-
-                const targetMinDuration = Math.floor(budgetMins * 0.8);
-
-                const needsPromptExpansion =
-                    parsedData.status === "outside_discovery" ||
-                    parsedData.status === "needs_prompt_expansion" ||
-                    parsedData.status === "no_match" ||
-                    parsedData.needs_external_discovery === true ||
-                    (!currentRecs.length && parsedData.status === "ok") ||
-                    (currentDuration < targetMinDuration && parsedData.status !== "clarify");
-
-                if (needsPromptExpansion) {
-                    const remainingNeeded = Math.max(budgetMins - currentDuration, 8);
-                    showToast(`Curating authentic tracks for "${parsedData.normalized_goal || goalText}"...`, "info");
-
-                    const promptTracks = await fetchExternalDiscoveryTracks({
-                        goalText,
-                        budgetMins: remainingNeeded,
-                        preferredTopics: parsedData.preferred_topics || [goalText],
-                        excludedTopics: parsedData.excluded_topics || [],
-                        existingIds: [...recommendationExclusions.ids, ...currentRecs.map(r => r.content_id)],
-                        currentTracks: [
-                            ...PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`),
-                            ...currentRecs.map(recommendation => {
-                                const item = CATALOG_ITEMS.find(candidate => candidate.id === recommendation.content_id);
-                                return item ? `${item.artist} - ${item.title}` : String(recommendation.content_id);
-                            })
-                        ]
-                    });
-
-                    if (promptTracks.length) {
-                        promptTracks.forEach(pt => {
-                            if (!CATALOG_ITEMS.some(c => c.id === pt.id)) {
-                                CATALOG_ITEMS.unshift(pt);
-                            }
-                            if (currentDuration + pt.duration <= budgetMins + 2) {
-                                currentRecs.push({
-                                    content_id: pt.id,
-                                    reason: pt.reason || `Directly matched to "${goalText}".`
-                                });
-                                currentDuration += pt.duration;
-                            }
-                        });
-
-                        document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} candidate songs (${promptTracks.length} loaded from prompt)`;
-                        renderCatalogTable();
-
-                        parsedData.status = "prompt_expanded";
-                        parsedData.recommendations = currentRecs;
-                        parsedData.ai_comment = `Curated ${promptTracks.length} tracks specifically matching "${goalText}".`;
-
+                    } catch (err) {
+                        console.error("Catalog ranking failed:", err);
+                        rankingError = err.message;
+                        if (!(err instanceof InvalidAiResponseError)) break;
                     }
                 }
 
-                // Check for duration shortfall
-                const remainingBudget = budgetMins - currentDuration;
-                if (currentDuration < targetMinDuration && remainingBudget >= 3 && parsedData.status !== "clarify" && parsedData.status !== "no_match") {
-                    showToast(`Queue is ${currentDuration}m. Curating filler tracks for your ${budgetMins}m budget...`, "info");
-
-                    const currentTrackNames = currentRecs.map(r => {
-                        const item = CATALOG_ITEMS.find(c => c.id === r.content_id);
-                        return item ? `${item.artist} - ${item.title}` : r.content_id;
-                    });
-
-                    const fillerTracks = await fetchBudgetFillerTracks({
-                        goalText,
-                        remainingBudget,
-                        totalBudget: budgetMins,
-                        preferredTopics: parsedData.preferred_topics || [goalText],
-                        excludedTopics: parsedData.excluded_topics || [],
-                        existingIds: [...recommendationExclusions.ids, ...currentRecs.map(r => r.content_id)],
-                        currentTracks: [
-                            ...PLAYLIST_ITEMS.map(track => `${track.artist} - ${track.title}`),
-                            ...currentTrackNames
-                        ]
-                    });
-
-                    if (fillerTracks && fillerTracks.length > 0) {
-                        let addedFillerDuration = 0;
-                        fillerTracks.forEach(ft => {
-                            if (!CATALOG_ITEMS.some(c => c.id === ft.id)) {
-                                CATALOG_ITEMS.unshift(ft);
-                            }
-                            parsedData.recommendations.push({
-                                content_id: ft.id,
-                                reason: ft.reason || `Curated to fill the ${budgetMins}-minute Duration Range.`
-                            });
-                            addedFillerDuration += ft.duration;
-                        });
-
-                        document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} candidate songs (${fillerTracks.length} budget-filler tracks added)`;
-                        renderCatalogTable();
-
-                        const fillerComment = `Added ${fillerTracks.length} supplemental tracks (+${addedFillerDuration}m) to fully utilize your ${budgetMins}-minute duration goal.`;
-                        parsedData.ai_comment = parsedData.ai_comment ? `${parsedData.ai_comment} ${fillerComment}` : fillerComment;
-
-                        showToast(`Added ${fillerTracks.length} tracks to fill queue (${currentDuration + addedFillerDuration}/${budgetMins}m)`, "success");
+                function fillFromCandidates() {
+                    for (const candidate of candidates) {
+                        const isSearch = candidate.source === "search";
+                        selectCandidate(
+                            candidate,
+                            isSearch
+                                ? "Catalog search matched a goal term; added to reach the duration target."
+                                : "Broader catalog fallback added to reach the duration target; it may not match the goal.",
+                            isSearch ? "search_fill" : "broad_fill"
+                        );
+                        if (totalMs >= targetMs) break;
                     }
                 }
-                renderResults(parsedData, budgetMins);
-                showToast("Goal Queue successfully generated!", "success");
 
+                fillFromCandidates();
+                while (totalMs < targetMs && page.next_offset !== null) {
+                    try {
+                        page = await fetchCatalogCandidates(goalText, excludedTopics, page.next_offset);
+                        addRows(page.fallback_candidates, "fallback");
+                        fillFromCandidates();
+                    } catch (err) {
+                        console.error("Could not load additional catalog candidates:", err);
+                        catalogError = err.message;
+                        break;
+                    }
+                }
+
+                const filled = totalMs >= targetMs;
+                const note = [
+                    `Catalog candidates: ${stats.proposed} retrieved, ${stats.verified} with usable details and duration, ${stats.excluded} excluded or duplicate among returned tracks. Explicit exclusions are text-matched against available metadata during catalog search.`,
+                    `AI proposed ${stats.ai_proposed}; selected ${stats.ai_ranked} AI-ranked, ${stats.search_fill} goal-search fill, and ${stats.broad_fill} broader fallback tracks.`,
+                    `Audio: ${formatDuration(totalMs)} / ${formatDuration(targetMs)} minimum.`,
+                    filled ? "The final full track may exceed the target." : "The catalog search did not return enough eligible audio to reach the target.",
+                    rankingError ? `AI ranking failed: ${rankingError} Catalog search order was used instead.` : "",
+                    catalogError ? `Additional catalog search failed: ${catalogError}` : ""
+                ].filter(Boolean).join(" ");
+                const data = {
+                    normalized_goal: goalText,
+                    preferred_topics: [goalText],
+                    excluded_topics: excludedTopics,
+                    recommendations,
+                    selection_stats: stats,
+                    status: recommendations.length ? (stats.search_fill || stats.broad_fill ? "catalog_fill" : "discovered_match") : "no_match",
+                    ai_comment: note
+                };
+                renderResults(data, budgetMins);
+                if (!filled || rankingError || catalogError) {
+                    showToast(filled ? "Queue filled using catalog fallback; see the recommendation note." : "The queue is shorter than requested; see the recommendation note.", "warning");
+                } else {
+                    showToast("Goal Queue reached the requested minimum duration.", "success");
+                }
             } catch (err) {
                 console.error("Queue generation error:", err);
                 renderResults({
                     normalized_goal: goalText,
                     preferred_topics: [],
-                    excluded_topics: [],
+                    excluded_topics: excludedTopics,
                     recommendations: [],
                     status: "no_match",
                     ai_comment: `Unable to complete queue generation: ${err.message}`
@@ -1413,6 +1409,9 @@ ${compactCatalogPrompt}
             } else if (status === "popular_match") {
                 statusTag.className = "bg-amber-900/60 text-amber-300 border border-amber-700/50 text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5";
                 statusTag.innerHTML = `<i class="fa-solid fa-fire text-amber-400 text-[10px]"></i> POPULAR MATCH`;
+            } else if (status === "catalog_fill") {
+                statusTag.className = "bg-amber-900/60 text-amber-300 border border-amber-700/50 text-xs px-2.5 py-1 rounded-full font-mono";
+                statusTag.textContent = "CATALOG FILL";
             } else if (status === "clarify") {
                 statusTag.className = "bg-purple-900/60 text-purple-300 border border-purple-700/50 text-xs px-2.5 py-1 rounded-full font-mono";
             } else {
@@ -1435,9 +1434,13 @@ ${compactCatalogPrompt}
 
             // Process recommendations
             const queueList = document.getElementById("queueList");
-            let totalDuration = 0;
+            let totalDurationMs = 0;
             let containsExcludedItem = false;
-            const recommendations = normalizeRecommendations(data.recommendations);
+            const recommendations = filterExcludedRecommendations(
+                normalizeRecommendations(data.recommendations),
+                getRecommendationExclusions(getPreviouslyRecommendedIds())
+            );
+            data.recommendations = recommendations;
             rememberRecommendedIds(recommendations);
 
             if (!recommendations.length) {
@@ -1452,17 +1455,21 @@ ${compactCatalogPrompt}
                         cover: `https://placehold.co/120x120/1e293b/64748b?text=Music`,
                         tags: []
                     };
-                    totalDuration += item.duration;
+                    totalDurationMs += trackDurationMs(item);
 
                     const isViolation = (data.excluded_topics || []).some(ex => 
                         (item.tags || []).some(t => t.toLowerCase().includes(ex.toLowerCase())) ||
-                        (item.title || "").toLowerCase().includes(ex.toLowerCase())
+                        (item.title || "").toLowerCase().includes(ex.toLowerCase()) ||
+                        (item.artist || "").toLowerCase().includes(ex.toLowerCase())
                     );
                     if (isViolation) containsExcludedItem = true;
 
-                    const isDiscovered = item.tags.includes("outside-discovery") || item.tags.includes("prompt-curated") || item.isDiscoveredMatch;
+                    const isDiscovered = rec.source === "ai_ranked" || (
+                        !rec.source && (item.tags.includes("outside-discovery") || item.tags.includes("prompt-curated") || item.isDiscoveredMatch)
+                    );
                     const isPopular = item.tags.includes("popular-track") || item.isPopularMatch;
-                    const isFiller = item.tags.includes("budget-filler") || item.isBudgetFiller;
+                    const isFiller = rec.source === "search_fill" || rec.source === "broad_fill" ||
+                        item.tags.includes("budget-filler") || item.isBudgetFiller;
                     const imgElementId = `queue-cover-${index}`;
 
                     return `
@@ -1477,12 +1484,12 @@ ${compactCatalogPrompt}
                                     <div class="flex items-center justify-between">
                                         <h4 class="text-xs font-semibold text-white truncate">${escapeHtml(item.title)}</h4>
                                         <span class="text-[11px] font-mono font-medium text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                                            ${escapeHtml(item.duration)}m
+                                            ${escapeHtml(formatDuration(trackDurationMs(item)))}
                                         </span>
                                     </div>
                                     <div class="flex items-center space-x-2 mt-0.5">
                                         <span class="text-[11px] text-emerald-300 truncate">${escapeHtml(item.artist)}</span>
-                                        ${isDiscovered ? '<span class="bg-purple-900/60 text-purple-300 border border-purple-700/50 text-[9px] px-1.5 py-0.2 rounded font-sans flex items-center gap-1"><i class="fa-solid fa-sparkles text-purple-400 text-[8px]"></i>Prompt Match</span>' : ''}
+                                        ${isDiscovered ? '<span class="bg-purple-900/60 text-purple-300 border border-purple-700/50 text-[9px] px-1.5 py-0.2 rounded font-sans flex items-center gap-1"><i class="fa-solid fa-sparkles text-purple-400 text-[8px]"></i>AI Ranked</span>' : ''}
                                         ${isFiller ? '<span class="bg-cyan-900/60 text-cyan-300 border border-cyan-700/50 text-[9px] px-1.5 py-0.2 rounded font-sans flex items-center gap-1"><i class="fa-solid fa-stopwatch text-cyan-400 text-[8px]"></i>Budget Fill</span>' : ''}
                                         ${isPopular && !isDiscovered && !isFiller ? '<span class="bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[9px] px-1.5 py-0.2 rounded font-sans flex items-center gap-1"><i class="fa-solid fa-fire text-amber-400 text-[8px]"></i>Popular</span>' : ''}
                                         <span class="text-[10px] text-slate-400 bg-slate-800/80 px-1.5 py-0.2 rounded font-mono">${escapeHtml(item.id)}</span>
@@ -1500,15 +1507,15 @@ ${compactCatalogPrompt}
 
             // Metrics
             const metricDuration = document.getElementById("metricDuration");
-            metricDuration.textContent = `${totalDuration} / ${requestedBudget} m`;
-            metricDuration.className = totalDuration <= requestedBudget ? "font-semibold text-emerald-400 font-mono" : "font-semibold text-red-400 font-mono";
+            metricDuration.textContent = `${formatDuration(totalDurationMs)} / ${formatDuration(requestedBudget * 60000)}`;
+            metricDuration.className = totalDurationMs >= requestedBudget * 60000 ? "font-semibold text-emerald-400 font-mono" : "font-semibold text-amber-400 font-mono";
 
             const metricExclusion = document.getElementById("metricExclusion");
             if (containsExcludedItem) {
                 metricExclusion.textContent = "Violation Detected";
                 metricExclusion.className = "font-semibold text-red-400";
             } else {
-                metricExclusion.textContent = "100% Compliant";
+                metricExclusion.textContent = "No text matches";
                 metricExclusion.className = "font-semibold text-emerald-400";
             }
 
@@ -1821,6 +1828,7 @@ MANDATORY RULES:
 2. If the user asks about specific tracks in their queue, reference the actual titles, artists, durations, and curation reasons from the context above.
 3. SUGGEST TASTE INSIGHTS: If the listener shares a like, dislike, favorite artist, subgenre preference, or track critique (e.g. "I love upbeat synth", "Dislike acoustic guitar", "Too repetitive", "Need high energy for running"), identify 1 to 3 concise suggestions in "extracted_taste_insights". The listener must confirm each suggestion before it affects recommendations or is saved; do not imply an unconfirmed suggestion is already applied.
 4. SUGGEST REFINED GOALS: If the listener asks for adjustments or if their feedback warrants a modified Goal Mode prompt, provide a "suggested_recommender_action" with a concrete "goal", "budget" (number), and "exclusions" string. Otherwise set it to null.
+5. Do not repeat prior Concierge replies from the conversation history. Answer the new message directly and avoid reusing prior full sentences or openings unless needed for accuracy.
 
 Return valid JSON strictly matching this schema:
 {
@@ -1851,7 +1859,26 @@ NEW LISTENER MESSAGE:
 `;
 
             try {
-                const response = await requestAiJson(systemInstruction, chatPrompt, "chat");
+                let response = await requestAiJson(systemInstruction, chatPrompt, "chat");
+                if (repeatsRecentChatText(response.reply)) {
+                    const recentAssistantReplies = CHAT_HISTORY
+                        .filter(message => message.role === "assistant")
+                        .slice(-3)
+                        .map(message => message.text);
+                    response = await requestAiJson(
+                        `${systemInstruction}\n\nRETRY: Your previous answer repeated recent text. Write a new, directly relevant response without repeating it.`,
+                        `${chatPrompt}\n\nRECENT ASSISTANT REPLIES TO AVOID:\n${JSON.stringify(recentAssistantReplies)}`,
+                        "chat"
+                    );
+                    if (repeatsRecentChatText(response.reply)) {
+                        appendMessageToFeed(
+                            "assistant",
+                            "I repeated a recent reply instead of answering that. Please rephrase your question or ask a more specific follow-up."
+                        );
+                        showToast("The assistant repeated a recent reply. Please try rephrasing.", "warning");
+                        return;
+                    }
+                }
                 
                 CHAT_HISTORY.push({ role: "user", text: userText });
                 CHAT_HISTORY.push({ role: "assistant", text: response.reply });
@@ -1884,6 +1911,36 @@ NEW LISTENER MESSAGE:
                     sendBtn.classList.remove("opacity-50", "cursor-not-allowed");
                 }
             }
+        }
+
+        function normalizeChatText(text) {
+            return typeof text === "string"
+                ? text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+                : "";
+        }
+
+        function repeatsRecentChatText(reply) {
+            const normalizedReply = normalizeChatText(reply);
+            if (!normalizedReply) return false;
+
+            const recentReplies = CHAT_HISTORY
+                .filter(message => message.role === "assistant")
+                .slice(-3)
+                .map(message => message.text);
+            if (recentReplies.some(previous => normalizeChatText(previous) === normalizedReply)) {
+                return true;
+            }
+
+            const recentSentences = new Set(
+                recentReplies.flatMap(previous =>
+                    previous.split(/[.!?\n]+/)
+                        .map(normalizeChatText)
+                        .filter(sentence => sentence.length >= 50)
+                )
+            );
+            return reply.split(/[.!?\n]+/)
+                .map(normalizeChatText)
+                .some(sentence => sentence.length >= 50 && recentSentences.has(sentence));
         }
 
         function applyChatSuggestionToRecommender(encodedGoal, budget, encodedExclusions, autoGenerate = false) {

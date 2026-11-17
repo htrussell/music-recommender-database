@@ -131,6 +131,12 @@ class TrackVerificationRequest(BaseModel):
     tracks: list[TrackIdentity] = Field(max_length=50)
 
 
+class CatalogCandidateRequest(BaseModel):
+    goal: str = Field(min_length=1, max_length=500)
+    exclude_terms: list[str] = Field(default_factory=list, max_length=20)
+    offset: int = Field(default=0, ge=0, le=1000000)
+
+
 def extract_youtube_playlist_id(playlist_url: str) -> str:
     value = playlist_url.strip()
     if re.fullmatch(r"[A-Za-z0-9_-]{10,128}", value):
@@ -916,6 +922,105 @@ def normalize_track_identity(value: str) -> str:
     )
 
 
+def normalized_base_title(value: str) -> str:
+    value = re.sub(
+        r"\s*(?:[-–—]\s*|\()\s*(?:\d{4}\s+)?(?:remaster(?:ed)?|radio edit|live|acoustic)"
+        r"(?:\s+version|\s+\d{4})?\s*\)?\s*$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return normalize_track_identity(value)
+
+
+def credible_title_match(candidate: str, row: dict[str, Any]) -> bool:
+    title = row.get("title")
+    if not isinstance(title, str):
+        return False
+    expected = normalized_base_title(candidate)
+    actual = normalized_base_title(title)
+    if not expected or not actual:
+        return False
+    if expected == actual:
+        return True
+    similarity = row.get("title_similarity")
+    return (
+        min(len(expected), len(actual)) >= 5
+        and isinstance(similarity, (int, float))
+        and similarity >= 0.90
+    )
+
+
+CATALOG_SEARCH_STOP_WORDS = {
+    "and", "are", "audio", "build", "can", "find", "for", "from", "give", "like", "looking",
+    "minute", "minutes", "music", "new", "playlist", "please", "queue", "recommend",
+    "recommendations", "similar", "some", "song", "songs", "the", "track", "tracks", "under",
+    "with", "without", "your",
+}
+
+
+@app.post("/api/catalog/candidates")
+def catalog_candidates(request: CatalogCandidateRequest) -> dict[str, Any]:
+    if not request.goal.strip():
+        raise HTTPException(status_code=422, detail="A non-empty goal is required.")
+    if any(not term.strip() or len(term) > 100 for term in request.exclude_terms):
+        raise HTTPException(status_code=422, detail="Exclusion terms must contain 1 to 100 characters.")
+
+    terms = list(dict.fromkeys(
+        word for word in re.findall(r"[^\W_]+(?:[&'-][^\W_]+)*", request.goal.casefold())
+        if 3 <= len(word) <= 100 and not word.isdecimal() and word not in CATALOG_SEARCH_STOP_WORDS
+    ))[:6]
+    search_arguments: dict[str, Any] = {
+        "limit": MAX_QUERY_ROWS,
+        "exclude_terms": request.exclude_terms,
+    }
+    goal_rows: list[dict[str, Any]] = []
+    if request.offset == 0:
+        buckets = [
+            query_duckdb_catalog("search_tracks", {**search_arguments, "query": term})
+            for term in terms
+        ]
+        seen_ids: set[str] = set()
+        for index in range(MAX_QUERY_ROWS):
+            for bucket in buckets:
+                if index >= len(bucket):
+                    continue
+                row = bucket[index]
+                track_id = row.get("catalog_track_id")
+                if track_id is None or str(track_id) in seen_ids:
+                    continue
+                seen_ids.add(str(track_id))
+                goal_rows.append(row)
+                if len(goal_rows) == MAX_QUERY_ROWS:
+                    break
+            if len(goal_rows) == MAX_QUERY_ROWS:
+                break
+
+        def relevance(row: dict[str, Any]) -> int:
+            genre = str(row.get("genre") or "").casefold()
+            artist = str(row.get("artist") or "").casefold()
+            title = str(row.get("title") or "").casefold()
+            return sum(
+                4 if term in genre else 3 if term in artist else 1 if term in title else 0
+                for term in terms
+            )
+
+        goal_rows.sort(key=relevance, reverse=True)
+
+    fallback_rows = query_duckdb_catalog(
+        "search_tracks", {**search_arguments, "offset": request.offset}
+    )
+    return {
+        "goal_candidates": goal_rows,
+        "fallback_candidates": fallback_rows,
+        "next_offset": (
+            request.offset + MAX_QUERY_ROWS
+            if len(fallback_rows) == MAX_QUERY_ROWS and request.offset + MAX_QUERY_ROWS <= 1000000
+            else None
+        ),
+    }
+
+
 @app.post("/api/catalog/verify-tracks")
 def verify_discovered_tracks(request: TrackVerificationRequest) -> dict[str, Any]:
     candidates = [track.model_dump() for track in request.tracks]
@@ -948,11 +1053,7 @@ def verify_discovered_tracks(request: TrackVerificationRequest) -> dict[str, Any
             ):
                 unique_matches[key] = match
 
-        exact_title_matches = [
-            row for row in unique_matches.values()
-            if row.get("title_similarity") == 1.0
-        ]
-        candidate_matches = exact_title_matches or list(unique_matches.values())
+        candidate_matches = list(unique_matches.values())
         artist_matches = [
             row for row in candidate_matches
             if (
@@ -960,7 +1061,7 @@ def verify_discovered_tracks(request: TrackVerificationRequest) -> dict[str, Any
                 or normalize_track_identity(row.get("artist", ""))
                 == normalize_track_identity(candidate["artist"])
             )
-            and row.get("title_similarity", 1) >= 0.60
+            and credible_title_match(candidate["title"], row)
         ]
         selected = (
             max(
@@ -978,11 +1079,8 @@ def verify_discovered_tracks(request: TrackVerificationRequest) -> dict[str, Any
             fuzzy_matches = sorted(
                 (
                     row for row in candidate_matches
-                    if row.get("title_similarity", 0) >= 0.68
-                    and (
-                        row.get("artist_similarity", 0) >= 0.35
-                        or row.get("title_similarity", 0) >= 0.82
-                    )
+                    if credible_title_match(candidate["title"], row)
+                    and row.get("artist_similarity", 0) >= 0.85
                 ),
                 key=lambda row: (
                     0.7 * row.get("title_similarity", 0)
@@ -996,15 +1094,6 @@ def verify_discovered_tracks(request: TrackVerificationRequest) -> dict[str, Any
             )
             if fuzzy_matches:
                 selected = fuzzy_matches[0]
-        if selected is None and exact_title_matches:
-            selected = max(
-                exact_title_matches,
-                key=lambda row: (
-                    row.get("artist_similarity", 0),
-                    row.get("source") == "primary",
-                    row.get("popularity") or 0,
-                ),
-            )
         if selected is None:
             continue
         track_id = selected.get("catalog_track_id")

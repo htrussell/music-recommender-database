@@ -153,19 +153,42 @@ use the `llama` model key on the Cloudflare Worker at
 `https://music-rec-ai.htrussell.workers.dev`; chat and catalog/SQL planning use
 the `glm` model key. If a model returns no message content or invalid JSON, the
 API retries with the other configured model.
-Direct Prompt Mode uses `llama` to generate tracks. Playlist-grounded
-recommendations use the imported playlist as taste context, exclude its tracks
-from new queues, and skip a redundant catalog-planning call;
-other catalog-backed requests continue to use DuckDB. Direct Prompt Mode
-verifies titles and artist credits against the local catalog using exact matches
-or lenient fuzzy title/artist similarity, and makes up to two additional
-discovery passes to fill a short playlist. It prefers matching artist credits
-but can select the closest title candidate when the model returns a mismatched
-artist or several plausible matches; occasional catalog mismatches are possible.
-Tracks already in an imported playlist and tracks recommended previously in the
-browser session are excluded from new queues.
-It never exceeds the requested duration. A partial queue is retained if a refill
-request fails or the catalog has too few matching tracks.
+Queue generation searches the local catalog using goal terms, then asks `llama`
+to rank eligible catalog tracks. The goal takes precedence over playlist and
+sample-profile taste signals. Up to two additional ranking attempts are made;
+if needed, goal-term search results and then broader catalog tracks fill the
+queue. Broader fallback tracks may not match the goal and are labeled in the
+queue. Goal-term matches in genre and artist metadata are prioritized over
+incidental words in titles. Ranking failures are reported alongside any catalog fallback.
+
+The duration is a **minimum** calculated from catalog milliseconds. The final
+whole track may exceed it. Tracks without a usable catalog duration are not
+counted. If catalog search fails or there is insufficient eligible audio, a
+partial queue is retained and the shortfall is reported. The recommendation
+note includes candidate, exclusion, AI-ranking, and fallback counts.
+
+Imported playlist tracks, sample-profile reference tracks, explicit exclusions,
+and previously recommended tracks are excluded. Explicit exclusions are
+case-insensitive text matches against available track, artist, and genre
+metadata; concepts absent from that metadata cannot be reliably checked.
+Playlist, sample, and prior
+tracks are checked by ID, artist/title identity, and normalized title. Within a
+queue, only the first matching title is retained, regardless of artist. This
+prevents alternate-artist covers with matching titles but can also omit
+different songs that share a title. For YouTube imports, the filter also checks
+parts of video titles such as `Artist - Song (Official Video)` and repeated
+artist prefixes. For titles of at least eight characters, playlist and
+sample-reference exclusions additionally allow one character edit, or two when
+the longer title has at least twelve characters. Shorter titles require an exact
+normalized match. These conservative checks can still exclude distinct songs
+with similar titles and do not identify all covers.
+
+The separate **Load Songs for Prompt** action verifies AI-proposed titles and
+artist credits against the local catalog. It requires a credible artist and an
+exact, recognized-version, or high-confidence title match; a matching artist
+alone does not validate a different song.
+The AI Taste Concierge avoids repeating recent replies and retries once if it
+reuses a recent reply or a substantial sentence.
 The API sets task-specific output-token limits to constrain generated response
 size. Set `CLOUDFLARE_WORKER_URL` in the shell or Compose `.env` file to
 override the Worker endpoint. `nomic-embed-text:v1.5` remains configured as the
@@ -195,12 +218,13 @@ as suggestions until the listener confirms each one; only confirmed
 preferences can influence recommendations or be saved in the browser session.
 The demo can load one of the 4,000 sample profiles in
 `csv/music_streaming_habits_2026.csv` by listener ID. DuckDB reads that file as
-a separate, read-only profile view and adds up to 40 catalog tracks matched by
-top artist and curated top-genre aliases to the candidate pool. Only top artist,
-top genre, and top mood are sent to the model; other sample attributes are shown
-locally. These synthetic fixture IDs are not authenticated users or streaming
-event history. The selected ID is retained only when the listener saves the
-browser-session profile.
+a separate, read-only profile view and identifies up to 40 catalog tracks
+matched by top artist and curated top-genre aliases. These tracks are shown as
+taste references and excluded from new queues; they are not actual listening
+history. Top artist, top genre, top mood, and matching catalog examples may be
+sent to the model; other sample attributes are shown locally. These synthetic
+fixture IDs are not authenticated users or streaming event history. The selected
+ID is retained only when the listener saves the browser-session profile.
 Public YouTube playlist links are imported by the local backend using `yt-dlp`;
 no third-party API key is required in the frontend. The AI can match alternate
 title spellings and YouTube title variations against the read-only music
@@ -267,6 +291,7 @@ Run these from the repository root in a Bash shell:
 | Stop containers and network, retaining named data volumes | `docker compose down` |
 | Start the demo again | `bash ./start.sh` |
 | Run backend unit tests in the running API container | `docker compose exec ai-api python -m unittest discover -s /app -p 'test_*.py'` |
+| Run frontend recommendation regression tests (Node.js required) | `node --test tests/test_recommendations.js` |
 | Open a PostgreSQL shell | `docker compose exec postgres psql -U airflow -d track-db` |
 
 `docker compose down -v` also deletes named volumes, including PostgreSQL and

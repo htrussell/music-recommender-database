@@ -7,6 +7,7 @@ import sqlglot
 
 from main import (
     AssistantRequest,
+    CatalogCandidateRequest,
     CHAT_MODEL,
     EMBEDDING_MODEL,
     MODEL,
@@ -15,6 +16,7 @@ from main import (
     TrackVerificationRequest,
     assistant_json,
     call_cloudflare_worker,
+    catalog_candidates,
     clean_json,
     extract_youtube_playlist_id,
     fetch_catalog_for_request,
@@ -540,7 +542,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         worker.assert_called_once()
         self.assertEqual(worker.call_args.kwargs["model"], MODEL)
 
-    def test_discovered_track_verification_corrects_single_catalog_match(self) -> None:
+    def test_discovered_track_verification_rejects_wrong_artist_for_exact_title(self) -> None:
         with patch(
             "main.query_duckdb_catalog",
             return_value=[
@@ -561,24 +563,10 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 TrackVerificationRequest(tracks=[TrackIdentity(title="Harvey", artist="Tyler, The Creator")])
             )
 
-        self.assertEqual(
-            result["tracks"],
-            [
-                {
-                    "catalog_track_id": 17,
-                    "title": "Harvey",
-                    "artist": "Alex G",
-                    "duration_ms": 210000,
-                    "genre": "Indie",
-                    "candidate_index": 0,
-                    "artist_corrected": True,
-                    "source": "primary",
-                }
-            ],
-        )
+        self.assertEqual(result["tracks"], [])
         query.assert_called_once()
 
-    def test_discovered_track_verification_uses_best_candidate_for_ambiguous_title(self) -> None:
+    def test_discovered_track_verification_rejects_ambiguous_title_without_artist_match(self) -> None:
         with patch(
             "main.query_duckdb_catalog",
             return_value=[
@@ -590,8 +578,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 TrackVerificationRequest(tracks=[TrackIdentity(title="Young", artist="Unknown Artist")])
             )
 
-        self.assertEqual(len(result["tracks"]), 1)
-        self.assertEqual(result["tracks"][0]["catalog_track_id"], 2)
+        self.assertEqual(result["tracks"], [])
 
     def test_discovered_track_verification_uses_exact_musicbrainz_artist(self) -> None:
         with patch(
@@ -653,7 +640,25 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
         self.assertTrue(result["tracks"][0]["artist_corrected"])
 
-    def test_discovered_track_verification_allows_strong_unique_title_with_wrong_artist(self) -> None:
+    def test_discovered_track_verification_does_not_prefer_wrong_artist_exact_title(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {"candidate_index": 0, "catalog_track_id": "cover", "title": "Blue Train",
+                 "artist": "Other Artist", "candidate_artist_match": 0,
+                 "title_similarity": 1.0, "artist_similarity": 0.3},
+                {"candidate_index": 0, "catalog_track_id": "original", "title": "Blue Train - Remastered",
+                 "artist": "Alice", "candidate_artist_match": 1,
+                 "title_similarity": 0.85, "artist_similarity": 1.0},
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(tracks=[TrackIdentity(title="Blue Train", artist="Alice")])
+            )
+
+        self.assertEqual([track["catalog_track_id"] for track in result["tracks"]], ["original"])
+
+    def test_discovered_track_verification_rejects_strong_title_with_wrong_artist(self) -> None:
         with patch(
             "main.query_duckdb_catalog",
             return_value=[
@@ -675,9 +680,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(len(result["tracks"]), 1)
-        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
-        self.assertTrue(result["tracks"][0]["artist_corrected"])
+        self.assertEqual(result["tracks"], [])
 
     def test_discovered_track_verification_rejects_weak_title_and_artist_match(self) -> None:
         with patch(
@@ -735,7 +738,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(len(result["tracks"]), 1)
         self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-2")
 
-    def test_discovered_track_verification_accepts_loose_title_match_with_wrong_artist(self) -> None:
+    def test_discovered_track_verification_rejects_loose_title_match_with_wrong_artist(self) -> None:
         with patch(
             "main.query_duckdb_catalog",
             return_value=[
@@ -756,10 +759,32 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(len(result["tracks"]), 1)
-        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
+        self.assertEqual(result["tracks"], [])
 
-    def test_discovered_track_verification_accepts_low_title_similarity_with_exact_artist(self) -> None:
+    def test_discovered_track_verification_requires_high_artist_similarity(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[
+                {
+                    "candidate_index": 0,
+                    "catalog_track_id": "track-1",
+                    "title": "Blue Train",
+                    "artist": "Alice",
+                    "candidate_artist_match": 0,
+                    "title_similarity": 0.94,
+                    "artist_similarity": 0.84,
+                }
+            ],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(
+                    tracks=[TrackIdentity(title="Blue Trane", artist="Alyce")]
+                )
+            )
+
+        self.assertEqual(result["tracks"], [])
+
+    def test_discovered_track_verification_rejects_low_title_similarity_with_exact_artist(self) -> None:
         with patch(
             "main.query_duckdb_catalog",
             return_value=[
@@ -780,8 +805,71 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(len(result["tracks"]), 1)
-        self.assertEqual(result["tracks"][0]["catalog_track_id"], "track-1")
+        self.assertEqual(result["tracks"], [])
+
+    def test_discovered_track_verification_rejects_unrelated_short_title(self) -> None:
+        with patch(
+            "main.query_duckdb_catalog",
+            return_value=[{
+                "candidate_index": 0,
+                "catalog_track_id": "wrong",
+                "title": "Die Hard",
+                "artist": "Kendrick Lamar",
+                "candidate_artist_match": 1,
+                "title_similarity": 0.75,
+            }],
+        ):
+            result = verify_discovered_tracks(
+                TrackVerificationRequest(tracks=[TrackIdentity(title="DNA.", artist="Kendrick Lamar")])
+            )
+
+        self.assertEqual(result["tracks"], [])
+
+    def test_catalog_candidates_interleaves_goal_searches_and_requests_fallback(self) -> None:
+        rows = [
+            [{"catalog_track_id": "indie1"}, {"catalog_track_id": "shared"}],
+            [{"catalog_track_id": "alt1"}, {"catalog_track_id": "shared"}],
+            [{"catalog_track_id": "fallback"}],
+        ]
+        with patch("main.query_duckdb_catalog", side_effect=rows) as query:
+            response = catalog_candidates(CatalogCandidateRequest(
+                goal="Find new indie and alternative music", exclude_terms=["country"]
+            ))
+
+        self.assertEqual(
+            [row["catalog_track_id"] for row in response["goal_candidates"]],
+            ["indie1", "alt1", "shared"],
+        )
+        self.assertEqual(response["fallback_candidates"][0]["catalog_track_id"], "fallback")
+        self.assertIsNone(response["next_offset"])
+        self.assertEqual(query.call_args_list[0].args[1]["query"], "indie")
+        self.assertEqual(query.call_args_list[1].args[1]["query"], "alternative")
+        self.assertEqual(query.call_args_list[2].args[1]["exclude_terms"], ["country"])
+
+    def test_catalog_candidate_next_page_skips_goal_searches(self) -> None:
+        page = [{"catalog_track_id": str(index)} for index in range(100)]
+        with patch("main.query_duckdb_catalog", return_value=page) as query:
+            response = catalog_candidates(CatalogCandidateRequest(goal="indie music", offset=100))
+
+        self.assertEqual(response["goal_candidates"], [])
+        self.assertEqual(response["next_offset"], 200)
+        query.assert_called_once_with(
+            "search_tracks", {"limit": 100, "exclude_terms": [], "offset": 100}
+        )
+
+    def test_catalog_candidates_prioritize_genre_and_artist_over_incidental_title_words(self) -> None:
+        rows = [
+            [{"catalog_track_id": "lyrics", "title": "Clean Lyrics", "artist": "Other", "genre": "pop"}],
+            [{"catalog_track_id": "indie", "title": "Horizon", "artist": "Band", "genre": "indie"}],
+            [],
+        ]
+        with patch("main.query_duckdb_catalog", side_effect=rows):
+            response = catalog_candidates(CatalogCandidateRequest(goal="music with lyrics and indie"))
+
+        self.assertEqual(
+            [row["catalog_track_id"] for row in response["goal_candidates"]],
+            ["indie", "lyrics"],
+        )
 
     def test_chat_retries_with_recommendation_model_when_completion_is_empty(self) -> None:
         request = AssistantRequest(

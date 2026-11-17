@@ -181,20 +181,30 @@ def run_search_tracks(arguments: dict[str, Any], limit: int) -> list[dict[str, A
     if not isinstance(exclude_explicit, bool):
         raise HTTPException(status_code=422, detail="Argument 'exclude_explicit' must be a boolean.")
     exclusions = read_exclusions(arguments)
+    offset = arguments.get("offset", 0)
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0 or offset > 1000000:
+        raise HTTPException(status_code=422, detail="Argument 'offset' must be an integer from 0 to 1000000.")
 
     conditions: list[str] = []
     parameters: list[Any] = []
     if query:
         pattern = f"%{query}%"
         conditions.append(
-            "(tracks.track_name ILIKE ? OR artists.artist_name ILIKE ? OR genre.genre_name ILIKE ?)"
+            "(tracks.track_name ILIKE ? OR genre.genre_name ILIKE ? OR EXISTS ("
+            "SELECT 1 FROM track_artists AS search_credits "
+            "JOIN artists AS search_artists ON search_credits.artist_id = search_artists.artist_id "
+            "WHERE search_credits.track_id = tracks.track_id AND search_artists.artist_name ILIKE ?))"
         )
         parameters.extend((pattern, pattern, pattern))
     if genre:
         conditions.append("genre.genre_name ILIKE ?")
         parameters.append(f"%{genre}%")
     if artist:
-        conditions.append("artists.artist_name ILIKE ?")
+        conditions.append(
+            "EXISTS (SELECT 1 FROM track_artists AS search_credits "
+            "JOIN artists AS search_artists ON search_credits.artist_id = search_artists.artist_id "
+            "WHERE search_credits.track_id = tracks.track_id AND search_artists.artist_name ILIKE ?)"
+        )
         parameters.append(f"%{artist}%")
     if maximum_duration_ms is not None:
         conditions.append("tracks.duration_ms <= ?")
@@ -208,8 +218,10 @@ def run_search_tracks(arguments: dict[str, Any], limit: int) -> list[dict[str, A
         pattern = f"%{term}%"
         conditions.append(
             "(COALESCE(tracks.track_name, '') NOT ILIKE ? "
-            "AND COALESCE(artists.artist_name, '') NOT ILIKE ? "
-            "AND COALESCE(genre.genre_name, '') NOT ILIKE ?)"
+            "AND COALESCE(genre.genre_name, '') NOT ILIKE ? "
+            "AND NOT EXISTS (SELECT 1 FROM track_artists AS excluded_credits "
+            "JOIN artists AS excluded_artists ON excluded_credits.artist_id = excluded_artists.artist_id "
+            "WHERE excluded_credits.track_id = tracks.track_id AND excluded_artists.artist_name ILIKE ?))"
         )
         parameters.extend((pattern, pattern, pattern))
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -239,10 +251,10 @@ def run_search_tracks(arguments: dict[str, Any], limit: int) -> list[dict[str, A
             track_feel.energy, track_feel.valence, track_feel.danceability,
             track_feel.acousticness, track_feel.instrumentalness, track_feel.tempo,
             tracks.popularity, tracks.explicit
-        ORDER BY tracks.popularity DESC NULLS LAST
-        LIMIT ?
+        ORDER BY tracks.popularity DESC NULLS LAST, tracks.track_id
+        LIMIT ? OFFSET ?
     """
-    parameters.append(limit)
+    parameters.extend((limit, offset))
     if connection is None:
         raise HTTPException(status_code=503, detail="DuckDB catalog has not finished loading.")
     return rows_from_cursor(connection.execute(statement, parameters))
@@ -623,6 +635,7 @@ def query_catalog(request: CatalogToolRequest) -> dict[str, Any]:
             "minimum_energy",
             "exclude_explicit",
             "limit",
+            "offset",
         },
         "verify_tracks": {"tracks"},
         "search_albums": {
