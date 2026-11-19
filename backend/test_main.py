@@ -335,7 +335,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(ollama.call_args_list[0].kwargs["model"], SQL_MODEL)
         self.assertEqual(ollama.call_args_list[0].kwargs["max_tokens"], 384)
         self.assertEqual(ollama.call_args_list[1].kwargs["model"], MODEL)
-        self.assertEqual(ollama.call_args_list[1].kwargs["max_tokens"], 1200)
+        self.assertEqual(ollama.call_args_list[1].kwargs["max_tokens"], 512)
 
     def test_assistant_skips_catalog_query_for_small_talk(self) -> None:
         request = AssistantRequest(
@@ -948,7 +948,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertIn("explore", response["result"]["reply"])
         self.assertEqual(worker.call_count, 2)
         self.assertEqual(worker.call_args_list[0].kwargs["model"], CHAT_MODEL)
-        self.assertEqual(worker.call_args_list[1].kwargs["model"], MODEL)
+        self.assertEqual(worker.call_args_list[1].kwargs["model"], "gemma")
 
     def test_recommendation_retries_with_chat_model_when_completion_is_empty(self) -> None:
         request = AssistantRequest(
@@ -974,8 +974,8 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(response["result"], {"recommendations": []})
         self.assertEqual(worker.call_count, 2)
         self.assertEqual(worker.call_args_list[0].kwargs["model"], MODEL)
-        self.assertEqual(worker.call_args_list[1].kwargs["model"], CHAT_MODEL)
-        self.assertEqual(worker.call_args_list[1].kwargs["max_tokens"], 1200)
+        self.assertEqual(worker.call_args_list[1].kwargs["model"], "granite")
+        self.assertEqual(worker.call_args_list[1].kwargs["max_tokens"], 512)
         self.assertFalse(worker.call_args_list[1].kwargs["allow_plain_text"])
 
     def test_recommendation_retries_with_strict_json_instruction_on_invalid_json(self) -> None:
@@ -1000,7 +1000,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(response["result"], {"recommendations": []})
         self.assertEqual(worker.call_count, 2)
         self.assertEqual(worker.call_args_list[0].kwargs["model"], MODEL)
-        self.assertEqual(worker.call_args_list[1].kwargs["model"], CHAT_MODEL)
+        self.assertEqual(worker.call_args_list[1].kwargs["model"], "granite")
         self.assertIn("previous model did not return a valid JSON object", worker.call_args_list[1].args[0])
 
     def test_empty_completions_from_every_worker_model_return_clear_error(self) -> None:
@@ -1026,7 +1026,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertIn("all tried models: gemma, granite", error.exception.detail)
         self.assertEqual(
             [call.kwargs["model"] for call in worker.call_args_list],
-            [MODEL, CHAT_MODEL],
+            [MODEL, "granite"],
         )
 
     def test_cloudflare_worker_accepts_object_result(self) -> None:

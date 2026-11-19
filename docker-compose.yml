@@ -46,8 +46,6 @@ services:
         condition: service_healthy
       duckdb:
         condition: service_started
-      ollama-model:
-        condition: service_completed_successfully
 
   duckdb:
     build:

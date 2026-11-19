@@ -77,11 +77,11 @@ By running the extraction scripts, you will download data subject to the respect
 The base Docker demo is a lightweight local catalog application. The following
 are practical resource estimates, not formal benchmark guarantees:
 
-| Configuration | CPU | Memory | Free disk |
+| Configuration | CPU | Docker memory | Project Docker volume disk |
 |---|---|---|---|
-| Minimum local demo | 2 CPU cores | 4 GB Docker memory | 5 GB |
-| Recommended local demo | 4 CPU cores | 6-8 GB Docker memory | 10 GB |
-| Full pgvector catalog build | 4+ CPU cores | 6-8 GB Docker memory | 15 GB recommended |
+| Minimum local demo | 2 CPU cores | 4 GB | 5-6 GB |
+| Recommended local demo | 4 CPU cores | 6-8 GB | 5-6 GB |
+| Full pgvector catalog build | 4+ CPU cores | 6-8 GB | 5-7 GB |
 
 The minimum configuration can run the catalog, PostgreSQL, DuckDB, Ollama, and
 the web/API containers. Docker Desktop memory should be allocated to the engine
@@ -96,10 +96,17 @@ For full semantic retrieval, the pgvector build adds roughly:
 - Approximately 2,800 Nomic embedding batches when embedding the full catalog
   with the default batch size
 
-Reserve approximately 1-2 GB of additional disk for pgvector's vectors, indexes,
-database pages, and build overhead. Docker memory of 6-8 GB is recommended
-during the first full embedding build; CPU availability primarily determines build
-duration. The full build is not required to run the base demo.
+Reserve approximately 1-2 GB of additional project Docker volume disk for the pgvector vectors,
+indexes, database pages, and build overhead. This is an estimate, not a measured
+value; the actual requirement should be recorded after a full 89,741-track build.
+The 5-6 GB project Docker volume estimate is based on the measured current
+project volume usage of approximately 4.3 GB: Ollama 3.793 GB, PostgreSQL
+0.478 GB, and the remaining project data volumes below 0.02 GB. The full
+pgvector catalog build is estimated to add roughly 1-2 GB, so a 5-7 GB
+project-volume reserve covers the current stack and the incremental build.
+Docker memory of 6-8 GB is recommended during the first full embedding build;
+CPU availability primarily determines build duration. The full build is not
+required to run the base demo.
 
 The local Nomic model performs embedding work, while Cloudflare Workers AI
 provides text generation. The embedding build uses local Ollama CPU resources
@@ -109,36 +116,41 @@ The setup and launcher scripts are intended to be run from the repository root.
 They create/use `.venv` for the local data preparation tools and build the
 application containers through Docker Compose.
 
-### 1. Configure Kaggle credentials
+### 1. Run unified setup
 
-Either set both environment variables in the shell that will run setup:
+On Windows, Linux, or macOS:
 
 ```bash
-export KAGGLE_USERNAME="your-kaggle-username"
-export KAGGLE_KEY="your-kaggle-api-key"
+python setup.py
 ```
 
-Or place the Kaggle API token in `~/.kaggle/kaggle.json` with permissions
-restricted to your user. Do not commit credentials to the repository. On
-Windows, the Bash home directory is used by the script.
+The interactive launcher:
 
-### 2. Download, transform, and load the catalog
+- asks whether to download Kaggle sources, reuse existing CSVs, or reuse existing Parquet files
+- prompts for Kaggle username and a hidden API-key entry when credentials are missing
+- writes `~/.kaggle/kaggle.json` with user-only Unix permissions when needed
+- creates `.venv` and installs data-loading dependencies
+- transforms the catalog
+- asks before replacing PostgreSQL music tables
+- offers `none`, `subset`, or `full` pgvector embeddings
+- optionally starts the web demo
+
+Kaggle credentials may instead be supplied through `KAGGLE_USERNAME` and
+`KAGGLE_KEY`, or an existing `~/.kaggle/kaggle.json`. Do not commit credentials.
+
+Automation examples:
+
+```bash
+python setup.py --download reuse-csv --skip-postgres-load --semantic none --non-interactive --yes
+python setup.py --download download --semantic subset --embedding-limit 32 --start --yes
+python setup.py --download reuse-parquet --semantic full --start --yes
+```
+
+The existing Bash entry point delegates to the unified launcher:
 
 ```bash
 bash ./setup.sh
 ```
-
-This creates `.venv`, installs the Kaggle and Parquet dependencies, downloads
-the source CSVs into `csv/`, creates eight canonical Parquet files in
-`transformed/`, starts PostgreSQL, and loads the Parquet data into its
-relational tables. The loader drops and recreates the music tables. Setup asks
-for confirmation before this database replacement; do not confirm if you need
-to preserve tables in the local `track-db` database.
-
-Setup also creates the pgvector extension and builds a 768-dimensional
-`nomic-embed-text:v1.5` embedding for each catalog track in PostgreSQL. Set
-`EMBEDDING_MAX_TRACKS` to a positive integer when intentionally testing a bounded
-embedding subset.
 
 ### 3. Start the demo
 
@@ -246,7 +258,8 @@ and runs using the `music_reader` role.
 override the local-development default.
 
 The API health endpoint is <http://localhost:8080/healthz>. It checks the
-PostgreSQL reader connection and the configured local Ollama embedding model.
+PostgreSQL reader connection and reports local Ollama embedding availability
+without making Ollama required for the base demo.
 The DuckDB service has its own `/healthz` endpoint on the internal Compose
 network; it is not published as a host port by default.
 
@@ -357,7 +370,8 @@ Kafka `9092`/`29092`, Spark `7077`/`18080`/`18081`, and Jupyter `8888`/`14040`.
 - **The UI does not become ready:** inspect `docker compose ps` and
   `docker compose logs frontend ai-api duckdb ollama`. On first launch, allow
   time for image and embedding-model downloads. The API health check requires
-  PostgreSQL and Ollama with the configured embedding model to be ready.
+  PostgreSQL and reports Ollama embedding availability separately; Ollama is
+  optional for the base demo.
 - **A host port is already in use:** stop the process using it or edit the
   corresponding port mapping in `docker-compose.yml` before starting Compose.
 

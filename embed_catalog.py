@@ -1,5 +1,7 @@
 import hashlib
 import os
+import sys
+import time
 from pathlib import Path
 
 import duckdb
@@ -58,6 +60,25 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
     return embeddings
 
 
+def print_progress(completed: int, total: int, started_at: float) -> None:
+    percent = 100 if total == 0 else min(100, completed * 100 // total)
+    elapsed = max(0.0, time.monotonic() - started_at)
+    bar_width = 30
+    filled = bar_width * percent // 100
+    bar = "#" * filled + "-" * (bar_width - filled)
+    elapsed_text = f"{elapsed:.1f}s"
+    eta_text = ""
+    if 0 < completed < total:
+        eta_seconds = elapsed * (total - completed) / completed
+        eta_text = f" ETA {eta_seconds:.1f}s"
+    sys.stdout.write(
+        f"\rEmbedding: [{bar}] {percent:3d}% ({completed}/{total}){eta_text} elapsed {elapsed_text}"
+    )
+    sys.stdout.flush()
+    if completed >= total:
+        sys.stdout.write("\n")
+
+
 def main() -> None:
     transformed = Path(__file__).resolve().parent / "transformed"
     if not (transformed / "tracks.parquet").is_file():
@@ -99,6 +120,11 @@ def main() -> None:
         connection.close()
     if MAX_TRACKS > 0:
         rows = rows[:MAX_TRACKS]
+    print(
+        f"Preparing {len(rows)} catalog tracks in batches of {BATCH_SIZE} "
+        f"with {EMBEDDING_MODEL}.",
+        flush=True,
+    )
 
     with psycopg2.connect(**DB_PARAMS) as postgres:
         with postgres.cursor() as cursor:
@@ -118,6 +144,9 @@ def main() -> None:
             )
 
             values = []
+            started_at = time.monotonic()
+            completed = 0
+            print_progress(completed, len(rows), started_at)
             for offset in range(0, len(rows), BATCH_SIZE):
                 batch = rows[offset:offset + BATCH_SIZE]
                 texts = [catalog_text(row) for row in batch]
@@ -135,6 +164,9 @@ def main() -> None:
                         EMBEDDING_MODEL,
                         hashlib.sha256(text.encode("utf-8")).hexdigest(),
                     ))
+
+                completed = min(len(rows), offset + len(batch))
+                print_progress(completed, len(rows), started_at)
 
                 if len(values) >= BATCH_SIZE * 4:
                     execute_values(
@@ -163,6 +195,7 @@ def main() -> None:
                     page_size=BATCH_SIZE,
                 )
 
+            print("Embedding vectors stored. Creating pgvector HNSW cosine index...", flush=True)
             cursor.execute(
                 """
                 CREATE INDEX IF NOT EXISTS catalog_track_embedding_cosine_idx

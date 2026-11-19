@@ -627,6 +627,41 @@ def query_music_catalog(query: str) -> list[dict[str, Any]]:
         raise HTTPException(status_code=502, detail=f"Read-only music catalog query failed: {error}") from error
 
 
+def call_sql_worker(
+   system_message: str,
+   user_message: str,
+   *,
+   max_tokens: int,
+) -> dict[str, Any]:
+   model_candidates = list(dict.fromkeys((SQL_MODEL, "gemma")))
+   retryable_error: HTTPException | None = None
+   for model_index, model in enumerate(model_candidates):
+       try:
+           return call_cloudflare_worker(
+               system_message,
+               user_message,
+               model=model,
+               max_tokens=max_tokens,
+           )
+       except HTTPException as error:
+           retryable_error = error
+           if model_index + 1 < len(model_candidates):
+               logger.warning(
+                   "Cloudflare SQL model %s was unusable; retrying with %s",
+                   model,
+                   model_candidates[model_index + 1],
+               )
+               continue
+   attempted_models = ", ".join(model_candidates)
+   raise HTTPException(
+       status_code=502,
+       detail=(
+           "Cloudflare AI Worker could not complete the SQL/catalog planning request "
+           f"from all tried models: {attempted_models}."
+       ),
+   ) from retryable_error
+
+
 def generate_catalog_tool(user_content: str) -> dict[str, Any]:
     tool_instruction = (
         "Choose exactly one catalog tool for the listener request and return JSON only. "
@@ -648,10 +683,9 @@ def generate_catalog_tool(user_content: str) -> dict[str, Any]:
         "search may return no matches. Keep arguments concise and use null or empty lists for unused "
         "filters. The response schema is {tool: string, arguments: object}."
     )
-    plan = call_cloudflare_worker(
+    plan = call_sql_worker(
         tool_instruction,
         f"Listener request:\n{user_content}",
-        model=SQL_MODEL,
         max_tokens=384,
     )
     tool = plan.get("tool")
@@ -753,10 +787,9 @@ def generate_catalog_query(user_content: str) -> str | None:
         "Do not use schema-qualified tables, comments, multiple statements, or functions. "
         "Add a LIMIT no greater than 100."
     )
-    plan = call_cloudflare_worker(
+    plan = call_sql_worker(
         query_system_instruction,
         f"Listener request:\n{user_content}",
-        model=SQL_MODEL,
         max_tokens=768,
     )
     query = plan.get("sql")
@@ -781,7 +814,7 @@ def generate_catalog_query(user_content: str) -> str | None:
             if missing_catalog_table
             else ""
         )
-        repair = call_cloudflare_worker(
+        repair = call_sql_worker(
             query_system_instruction
             + " The previous generated SQL failed validation. Create a corrected query that satisfies "
             "all rules. If a user criterion cannot be expressed using the listed schema, omit that "
@@ -795,7 +828,6 @@ def generate_catalog_query(user_content: str) -> str | None:
                 },
                 ensure_ascii=True,
             ),
-            model=SQL_MODEL,
             max_tokens=768,
         )
         repaired_query = repair.get("sql")
@@ -838,30 +870,32 @@ def healthcheck() -> dict[str, str]:
                 cursor.execute("SELECT 1")
     except psycopg2.Error as error:
         raise HTTPException(status_code=503, detail=f"Music database is unavailable: {error}") from error
+    embedding_status = "not-configured"
     try:
-        response = httpx.get(f"{OLLAMA_URL.rstrip('/')}/api/tags", timeout=5.0)
-        response.raise_for_status()
-    except httpx.HTTPError as error:
-        raise HTTPException(status_code=503, detail=f"Local Ollama is unavailable: {error}") from error
-    try:
-        available_models = {
-            model.get("name")
-            for model in response.json().get("models", [])
-            if isinstance(model, dict)
-        }
-    except (ValueError, TypeError) as error:
-        raise HTTPException(status_code=503, detail=f"Ollama returned an invalid model list: {error}") from error
-    required_models = {"embedding": EMBEDDING_MODEL}
-    missing_models = [model for model in required_models.values() if model not in available_models]
-    if missing_models:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Required local model(s) are not available yet: {', '.join(missing_models)}.",
-        )
+        response = httpx.get(f"{OLLAMA_URL.rstrip('/')}/api/tags", timeout=2.0)
+        if response.status_code == 200:
+            try:
+                available_models = {
+                    model.get("name")
+                    for model in response.json().get("models", [])
+                    if isinstance(model, dict)
+                }
+                embedding_status = (
+                    "ready"
+                    if EMBEDDING_MODEL in available_models
+                    else "model-not-installed"
+                )
+            except (ValueError, TypeError):
+                embedding_status = "invalid-model-list"
+        else:
+            embedding_status = f"http-{response.status_code}"
+    except httpx.HTTPError:
+        embedding_status = "unavailable"
     return {
         "status": "ok",
         "model": f"Cloudflare Worker ({MODEL}/{CHAT_MODEL}/{SQL_MODEL})",
-        **{f"{role}_model": model for role, model in required_models.items()},
+        "embedding_model": EMBEDDING_MODEL,
+        "embedding_status": embedding_status,
     }
 
 
@@ -1265,7 +1299,7 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
     selected_model = CHAT_MODEL if request.task == "chat" else MODEL
     max_tokens = {
         "chat": 512,
-        "recommendation": 1200,
+        "recommendation": 512,
         "discovery": 1400,
     }[request.task]
     model_candidates = list(dict.fromkeys((selected_model, CHAT_MODEL, MODEL)))
@@ -1299,9 +1333,11 @@ def assistant_json(request: AssistantRequest) -> dict[str, Any]:
                 error.status_code == 502
                 and "completion without message content" in error.detail
             )
+            provider_error = error.status_code == 502
             if (
                 not invalid_json
                 and not empty_completion
+                and not provider_error
             ):
                 raise
             retryable_response_error = error

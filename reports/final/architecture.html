@@ -1050,7 +1050,7 @@ conversation_data.memory_source(
           <article class="card"><h3>Primary query</h3><p>DuckDB in-memory connection creates views with <code>read_parquet</code>; tool API is parameterized and bounded.</p></article>
           <article class="card"><h3>Backup / fallback</h3><p>PostgreSQL 15 with relational PK/FK constraints; batch load is full refresh, not incremental.</p></article>
           <article class="card"><h3>User context · target</h3><p>Separate PostgreSQL serving schemas for profiles, explicitly saved queues, and opt-in conversation/memory data; never include them in the catalog loader or model SQL allowlist.</p></article>
-          <article class="card"><h3>Models</h3><p>Demo: Cloudflare Gemma 4 for recommendation ranking and Granite 4.0 H-Micro for chat/catalog planning; Ollama is configured for embeddings only. Legacy model keys remain as compatibility fallbacks.</p></article>
+          <article class="card"><h3>Models</h3><p>Demo: Gemma 4 for recommendation ranking and Granite 4.0 H-Micro for chat/catalog planning; Ollama is configured for embeddings only. Legacy model keys remain as compatibility fallbacks.</p></article>
         </div>
         <p>The DDL and loader are in <a href="../../load_postgres.py">load_postgres.py</a>. The existing PoC contains the eight measured Parquet datasets. The PostgreSQL loader validates column order and streams in batches up to 10,000 rows.</p>
         <h3>PostgreSQL index experiment mapping</h3>
