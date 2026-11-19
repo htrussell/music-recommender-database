@@ -31,6 +31,110 @@ function loadApp() {
     return context;
 }
 
+test("chat unwraps a JSON response without losing its suggestions", () => {
+    const app = loadApp();
+    const result = vm.runInContext(`normalizeChatResponse({
+        reply: '\\x60\\x60\\x60json\\n' + JSON.stringify({
+            reply: '**A great pick.**',
+            extracted_taste_insights: ['Likes indie'],
+            suggested_recommender_action: { goal: 'Indie', budget: 30, exclusions: '' }
+        }) + '\\n\\x60\\x60\\x60',
+        extracted_taste_insights: [],
+        suggested_recommender_action: null
+    })`, app);
+    assert.equal(result.reply, "**A great pick.**");
+    assert.equal(result.extracted_taste_insights[0], "Likes indie");
+    assert.equal(result.suggested_recommender_action.goal, "Indie");
+    assert.equal(vm.runInContext('normalizeChatResponse({ reply: "A plain reply." }).reply', app), "A plain reply.");
+});
+
+test("chat recovers a malformed reply with unescaped quotes and preserves metadata", () => {
+    const app = loadApp();
+    const result = vm.runInContext(`normalizeChatResponse({
+        reply: '{"reply": "Try "I Love You So".", "extracted_taste_insights": ["Likes indie"], "suggested_recommender_action": {"goal":"Focus", "budget":30}}'
+    })`, app);
+    assert.equal(result.reply, 'Try "I Love You So".');
+    assert.equal(result.extracted_taste_insights[0], "Likes indie");
+    assert.equal(result.suggested_recommender_action.goal, "Focus");
+});
+
+test("chat retries malformed JSON rather than showing it to the listener", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        let calls = 0;
+        requestAiJson = async instruction => {
+            calls++;
+            if (calls === 1) return {
+                reply: '{"reply": "A truncated response'
+            };
+            return { reply: '**Try** I Love You So.', instruction };
+        };
+        const response = await requestChatResponse("Initial instruction", "Hello");
+        return { calls, reply: response.reply, instruction: response.instruction };
+    })()`, app);
+    assert.equal(result.calls, 2);
+    assert.equal(result.reply, "**Try** I Love You So.");
+    assert.match(result.instruction, /escape all quotation marks/i);
+});
+
+test("chat surfaces an error after repeated invalid responses", async () => {
+    const app = loadApp();
+    await assert.rejects(vm.runInContext(`(async () => {
+        requestAiJson = async () => ({ reply: '{"reply": "A truncated response' });
+        return requestChatResponse("Initial instruction", "Hello");
+    })()`, app), /malformed chat JSON/);
+});
+
+test("chat keeps answering follow-ups even when a correct answer repeats", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        DEMO_PROFILE = { profile: { top_artist: "Example Artist", top_genre: "Rock", top_mood: "Calm" }, tracks: [] };
+        const messages = [];
+        const instructions = [];
+        const prompts = [];
+        appendMessageToFeed = (role, text) => messages.push({ role, text });
+        requestAiJson = async (instruction, prompt) => {
+            instructions.push(instruction);
+            prompts.push(prompt);
+            return { reply: "The sample profile's top artist is Example Artist." };
+        };
+        document.getElementById("chatTextInput").value = "Tell me about my taste.";
+        await sendChatMessage();
+        document.getElementById("chatTextInput").value = "Who is it again?";
+        await sendChatMessage();
+        return { messages, instructions, prompts, history: CHAT_HISTORY };
+    })()`, app);
+    assert.equal(result.messages.length, 4);
+    assert.equal(result.messages[3].text, "The sample profile's top artist is Example Artist.");
+    assert.equal(result.history.length, 4);
+    assert.equal(result.prompts.length, 2);
+    assert.match(result.prompts[1], /Top artist: Example Artist/);
+    assert.match(result.prompts[1], /CONVERSATION HISTORY:[\s\S]*Tell me about my taste/);
+    assert.match(result.instructions[0], /not evidence about the listener's real favorite artist/);
+});
+
+test("direct top and favorite artist questions use the sample field without guessing", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        const messages = [];
+        appendMessageToFeed = (role, text) => messages.push({ role, text });
+        requestAiJson = async () => { throw new Error("Unexpected AI request"); };
+        DEMO_PROFILE = { profile: { top_artist: "Example Artist", top_genre: "Rock", top_mood: "Calm" }, tracks: [] };
+        document.getElementById("chatTextInput").value = "Who is my top artist currently?";
+        await sendChatMessage();
+        document.getElementById("chatTextInput").value = "Who is my favorite artist?";
+        await sendChatMessage();
+        DEMO_PROFILE = null;
+        document.getElementById("chatTextInput").value = "What is my top artist?";
+        await sendChatMessage();
+        return messages;
+    })()`, app);
+    assert.match(result[1].text, /sample profile.*Example Artist/);
+    assert.match(result[1].text, /synthetic/);
+    assert.match(result[3].text, /sample profile.*Example Artist/);
+    assert.match(result[5].text, /don't have an account-based top artist/);
+});
+
 test("filters imported YouTube titles and covers while retaining unrelated titles", () => {
     const app = loadApp();
     const ids = vm.runInContext(`(() => {
@@ -203,6 +307,159 @@ test("catalog-first selection prioritizes ranked goals and excludes playlist, sa
     assert.match(result.prompt, /Sample taste signals: Top artist: Alice/);
     assert.doesNotMatch(result.prompt, /"id":"db:seed"/);
     assert.equal(result.calls, 3);
+});
+
+test("a sample top-artist request uses its artist and never fills with unrelated tracks", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        DEMO_PROFILE = {
+            profile: { top_artist: "Alice", top_genre: "Pop", top_mood: "Calm" },
+            tracks: [
+                { catalog_track_id: "seed", title: "Sample Song", artist: "Alice" },
+                { catalog_track_id: "heard", title: "Already Heard", artist: "Alice" },
+                { catalog_track_id: "genre", title: "Genre Reference", artist: "Other" }
+            ]
+        };
+        PLAYLIST_ITEMS = [{ id: "yt1", title: "Already Heard", artist: "Alice" }];
+        getPreviouslyRecommendedIds = () => ["db:old"];
+        getPreviouslyRecommendedTracks = () => [{ id: "db:old", title: "Old Song", artist: "Alice" }];
+        document.getElementById("goalTextInput").value = "Songs by my top artist";
+        document.getElementById("budgetInput").value = "30";
+        document.getElementById("exclusionsInput").value = "holiday";
+        showToast = () => {};
+        setLoading = () => {};
+        renderCatalogTable = () => {};
+        refreshChatContextDisplay = () => {};
+        const requests = [];
+        fetchCatalogCandidates = async (goal, exclusions, offset) => {
+            requests.push({ goal, offset });
+            const row = (id, title, artist) => ({ catalog_track_id: id, title, artist, duration_ms: 240000, genre: "pop" });
+            return { goal_candidates: [
+                row("seed", "Sample Song", "Alice"), row("heard", "Already Heard", "Alice"),
+                row("old", "Old Song", "Alice"), row("holiday", "Holiday Song", "Alice"),
+                row("other", "Other Song", "Other"), row("new", "Another Song", "Alice, Guest")
+            ], fallback_candidates: [row("fallback", "Popular Song", "Other")], next_offset: 100 };
+        };
+        requestAiJson = async () => ({ recommendations: [] });
+        await generateGoalQueue();
+        return { requests, result: LAST_RECOMMENDATION_DATA };
+    })()`, app);
+    assert.equal(result.requests.length, 1);
+    assert.equal(result.requests[0].goal, "Songs by Alice");
+    assert.deepEqual(Array.from(result.result.recommendations, item => item.id), ["db:seed", "db:new"]);
+    assert.match(result.result.ai_comment, /sample's top artist, Alice/);
+    assert.match(result.result.ai_comment, /5 returned tracks credit that artist; 1 was excluded by recommendation history/);
+    assert.match(result.result.ai_comment, /did not return enough eligible audio/);
+});
+
+test("repeated sample-artist requests explain history and can clear it without clearing the profile or playlist", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        DEMO_PROFILE = {
+            profile: { top_artist: "Alice", top_genre: "Pop", top_mood: "Calm" },
+            tracks: [{ catalog_track_id: "seed", title: "Sample Song", artist: "Alice" }]
+        };
+        PLAYLIST_ITEMS = [{ id: "yt1", title: "Heard Song", artist: "Alice" }];
+        sessionStorage.setItem("goalModeListenerProfile", "keep");
+        document.getElementById("goalTextInput").value = "Songs by my top artist";
+        document.getElementById("budgetInput").value = "4";
+        showToast = () => {};
+        setLoading = () => {};
+        renderCatalogTable = () => {};
+        refreshChatContextDisplay = () => {};
+        fetchCatalogCandidates = async () => ({ goal_candidates: [
+            { catalog_track_id: "seed", title: "Sample Song", artist: "Alice", duration_ms: 240000 }
+        ], fallback_candidates: [], next_offset: null });
+        requestAiJson = async () => ({ recommendations: [] });
+        await generateGoalQueue();
+        await generateGoalQueue();
+        const second = { count: LAST_RECOMMENDATION_DATA.recommendations.length, note: LAST_RECOMMENDATION_DATA.ai_comment };
+        confirm = () => false;
+        clearRecommendationHistory();
+        const retained = sessionStorage.getItem("goalModePreviouslyRecommended");
+        confirm = () => true;
+        clearRecommendationHistory();
+        const cleared = sessionStorage.getItem("goalModePreviouslyRecommended");
+        const profile = sessionStorage.getItem("goalModeListenerProfile");
+        const playlistCount = PLAYLIST_ITEMS.length;
+        const sample = DEMO_PROFILE.profile.top_artist;
+        await generateGoalQueue();
+        return { second, retained, cleared, profile, playlistCount, sample, third: LAST_RECOMMENDATION_DATA.recommendations.map(item => item.id) };
+    })()`, app);
+    assert.equal(result.second.count, 0);
+    assert.match(result.second.note, /1 returned track credits that artist; 1 was excluded by recommendation history/);
+    assert.match(result.retained, /db:seed/);
+    assert.equal(result.cleared, null);
+    assert.equal(result.profile, "keep");
+    assert.equal(result.playlistCount, 1);
+    assert.equal(result.sample, "Alice");
+    assert.deepEqual(Array.from(result.third), ["db:seed"]);
+});
+
+test("a direct top-artist request without a sample does not fall back to random tracks", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        document.getElementById("goalTextInput").value = "Songs by my top artist";
+        document.getElementById("budgetInput").value = "30";
+        let message = "";
+        showToast = text => { message = text; };
+        fetchCatalogCandidates = async () => { throw new Error("Unexpected catalog search"); };
+        await generateGoalQueue();
+        return message;
+    })()`, app);
+    assert.match(result, /Load a sample profile or name an artist/);
+});
+
+test("similar-to-top-artist goals retain normal discovery", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        DEMO_PROFILE = { profile: { top_artist: "Alice" }, tracks: [] };
+        document.getElementById("goalTextInput").value = "Songs similar to my top artist";
+        document.getElementById("budgetInput").value = "4";
+        showToast = () => {};
+        setLoading = () => {};
+        renderCatalogTable = () => {};
+        refreshChatContextDisplay = () => {};
+        let goal;
+        fetchCatalogCandidates = async text => {
+            goal = text;
+            return { goal_candidates: [], fallback_candidates: [
+                { catalog_track_id: "other", title: "Other Song", artist: "Other", duration_ms: 240000, genre: "pop" }
+            ], next_offset: null };
+        };
+        requestAiJson = async () => ({ recommendations: [] });
+        await generateGoalQueue();
+        return { goal, ids: LAST_RECOMMENDATION_DATA.recommendations.map(item => item.id) };
+    })()`, app);
+    assert.equal(result.goal, "Songs similar to my top artist");
+    assert.deepEqual(Array.from(result.ids), ["db:other"]);
+});
+
+test("partial queue rendering keeps items visible and does not record unfinished selections", () => {
+    const app = loadApp();
+    const result = vm.runInContext(`(() => {
+        CATALOG_ITEMS = [{ id: "db:1", title: "Partial Song", artist: "Artist", duration: 4, durationMs: 240000, cover: "", tags: [] }];
+        LAST_RECOMMENDATION_DATA = null;
+        setLoading(true);
+        setGenerationProgress(55, "AI ranking pass 2 of 3", "1 track selected");
+        renderResults({
+            normalized_goal: "Specific Artist",
+            preferred_topics: ["Specific Artist"],
+            excluded_topics: [],
+            recommendations: [{ content_id: "db:1", reason: "Selected by the current pass." }],
+            status: "generating",
+            ai_comment: "Generation is still in progress."
+        }, 30, true);
+        return {
+            percent: document.getElementById("loadingProgressPercent").textContent,
+            title: document.getElementById("loadingStateTitle").textContent,
+            queueText: document.getElementById("queueList").textContent,
+            chatReady: LAST_RECOMMENDATION_DATA
+        };
+    })()`, app);
+    assert.equal(result.percent, "55%");
+    assert.equal(result.title, "AI ranking pass 2 of 3");
+    assert.equal(result.chatReady, null);
 });
 
 test("queue duration uses actual milliseconds and permits only the last song to cross the target", async () => {
@@ -409,8 +666,8 @@ test("clearing a sample removes its exclusion and reference label from existing 
             .map(item => item.content_id).join(",");
         return { before, after, ids };
     })()`, app);
-    assert.match(result.before, /Sample reference \(excluded\)/);
-    assert.doesNotMatch(result.after, /Sample reference \(excluded\)/);
+    assert.match(result.before, /Sample reference/);
+    assert.doesNotMatch(result.after, /Sample reference/);
     assert.equal(result.ids, "db:seed");
 });
 

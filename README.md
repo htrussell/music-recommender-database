@@ -210,6 +210,12 @@ if needed, goal-term search results and then broader catalog tracks fill the
 queue. Broader fallback tracks may not match the goal and are labeled in the
 queue. Goal-term matches in genre and artist metadata are prioritized over
 incidental words in titles. Ranking failures are reported alongside any catalog fallback.
+For a direct request such as “songs by my top artist,” the loaded sample's
+top artist is used for catalog search and only tracks credited to that artist
+are selected. Matching sample reference tracks are eligible, but playlist,
+history, and explicit exclusions still apply. The queue may be shorter if the
+initial search has insufficient matches. This does not apply to similar-artist
+or general discovery goals.
 
 The duration is a **minimum** calculated from catalog milliseconds. The final
 whole track may exceed it. Tracks without a usable catalog duration are not
@@ -217,10 +223,12 @@ counted. If catalog search fails or there is insufficient eligible audio, a
 partial queue is retained and the shortfall is reported. The recommendation
 note includes candidate, exclusion, AI-ranking, and fallback counts.
 
-Imported playlist tracks, sample-profile reference tracks, explicit exclusions,
-and previously recommended tracks are excluded. Explicit exclusions are
+Imported playlist tracks, sample-profile reference tracks (except as noted
+above), explicit exclusions, and previously recommended tracks are excluded. Explicit exclusions are
 case-insensitive text matches against available track, artist, and genre
 metadata; concepts absent from that metadata cannot be reliably checked.
+Use **Clear recommendation history** to allow previously recommended tracks
+again without removing the playlist or sample profile.
 Playlist, sample, and prior
 tracks are checked by ID, artist/title identity, and normalized title. Within a
 queue, only the first matching title is retained, regardless of artist. This
@@ -237,16 +245,22 @@ The separate **Load Songs for Prompt** action verifies AI-proposed titles and
 artist credits against the local catalog. It requires a credible artist and an
 exact, recognized-version, or high-confidence title match; a matching artist
 alone does not validate a different song.
-The AI Taste Concierge avoids repeating recent replies and retries once if it
-reuses a recent reply or a substantial sentence.
+The AI Taste Concierge uses the loaded sample profile for direct top-artist
+questions and distinguishes it from the listener's real preferences. It can
+recover some malformed model responses and retries when they cannot be read.
 The API sets task-specific output-token limits to constrain generated response
 size. Set `CLOUDFLARE_WORKER_URL` in the shell or Compose `.env` file to
 override the Worker endpoint. `nomic-embed-text:v1.5` remains configured as the
 local Ollama embedding model. For catalog questions, the API asks the Worker's
 SQL model to select a bounded catalog tool.
-Track search, album search, and genre comparisons run as parameterized queries
+Artist and track search, album search, and genre comparisons run as parameterized queries
 against DuckDB, which queries the transformed Parquet files from
 `transformed/` at startup without copying the catalog into DuckDB tables.
+Artist lookup provides matching names, countries, popularity, and catalog tags
+when available; the tags can be noisy and are not definitive genres. The lookup
+cannot establish a listener's favorite artist or facts absent
+from the catalog. Chat is instructed to acknowledge missing evidence rather than
+guess, though model responses may still be inaccurate.
 PostgreSQL is a separately loaded relational backup/query fallback, derived
 from those same Parquet files. Prompts, approved profile details, and relevant
 catalog rows are sent to the Cloudflare Worker for model processing. If the
@@ -271,7 +285,7 @@ The demo can load one of the 4,000 sample profiles in
 `csv/music_streaming_habits_2026.csv` by listener ID. DuckDB reads that file as
 a separate, read-only profile view and identifies up to 40 catalog tracks
 matched by top artist and curated top-genre aliases. These tracks are shown as
-taste references and excluded from new queues; they are not actual listening
+taste references and normally excluded from new queues; they are not actual listening
 history. Top artist, top genre, top mood, and matching catalog examples may be
 sent to the model; other sample attributes are shown locally. These synthetic
 fixture IDs are not authenticated users or streaming event history. The selected
@@ -341,6 +355,7 @@ Run these from the repository root in a Bash shell:
 | Follow PostgreSQL logs | `docker compose logs -f postgres` |
 | Stop containers and network, retaining named data volumes | `docker compose down` |
 | Start the demo again | `bash ./start.sh` |
+| Apply changes to the AI API and catalog service | `docker compose up -d --no-deps --build ai-api duckdb` |
 | Run backend unit tests in the running API container | `docker compose exec ai-api python -m unittest discover -s /app -p 'test_*.py'` |
 | Run frontend recommendation regression tests (Node.js required) | `node --test tests/test_recommendations.js` |
 | Open a PostgreSQL shell | `docker compose exec postgres psql -U airflow -d track-db` |

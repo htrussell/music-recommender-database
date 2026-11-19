@@ -22,6 +22,7 @@ class DuckDBCatalogToolTests(unittest.TestCase):
                 popularity INTEGER, explicit BOOLEAN, album_id INTEGER
             );
             CREATE TABLE artists (artist_id INTEGER, artist_name VARCHAR, artist_country VARCHAR, artist_popularity DOUBLE);
+            CREATE TABLE artist_genres (artist_id INTEGER, genre_id INTEGER);
             CREATE TABLE track_artists (track_id VARCHAR, artist_id INTEGER);
             CREATE TABLE genre (genre_id INTEGER, genre_name VARCHAR);
             CREATE TABLE track_feel (
@@ -44,6 +45,7 @@ class DuckDBCatalogToolTests(unittest.TestCase):
                 (2, 'Bob', 'UK', 75);
             INSERT INTO track_artists VALUES ('t1', 1), ('t2', 2);
             INSERT INTO genre VALUES (1, 'Jazz');
+            INSERT INTO artist_genres VALUES (1, 1), (2, 1);
             INSERT INTO track_feel VALUES
                 ('t1', 0.8, 0.5, 0.7, 0.2, 0.1, 120),
                 ('t2', 0.4, 0.6, 0.6, 0.3, 0.2, 110);
@@ -88,6 +90,34 @@ class DuckDBCatalogToolTests(unittest.TestCase):
         )
 
         self.assertEqual(response["rows"], [])
+
+    def test_artist_search_returns_matching_artist_facts_and_genres(self) -> None:
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="search_artists", arguments={"query": "alice", "limit": 5}
+            )
+        )
+        self.assertEqual(
+            response["rows"],
+            [{"artist_id": 1, "artist_name": "Alice", "artist_country": "US",
+              "artist_popularity": 80.0, "catalog_tags": "Jazz"}],
+        )
+
+    def test_artist_search_requires_a_name_and_treats_it_as_literal_data(self) -> None:
+        for query in ("", "  "):
+            with self.assertRaises(HTTPException):
+                duckdb_service.query_catalog(
+                    duckdb_service.CatalogToolRequest(
+                        tool="search_artists", arguments={"query": query}
+                    )
+                )
+        for query in ("Unknown", "%", "' OR true --"):
+            response = duckdb_service.query_catalog(
+                duckdb_service.CatalogToolRequest(
+                    tool="search_artists", arguments={"query": query}
+                )
+            )
+            self.assertEqual(response["rows"], [])
 
     def test_track_search_by_semantic_ids_hydrates_only_selected_tracks(self) -> None:
         response = duckdb_service.query_catalog(

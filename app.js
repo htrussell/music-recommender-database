@@ -30,21 +30,6 @@
             }
         }
 
-        function hasListenerConsent() {
-            const consent = document.getElementById("listenerConsentCheck");
-            if (!consent?.checked) {
-                showToast("Please provide consent before importing or saving listener data.", "warning");
-                return false;
-            }
-            try {
-                sessionStorage.setItem("goalModeListenerConsent", "true");
-            } catch (err) {
-                showToast(`Could not store consent for this browser session: ${err.message}`, "error");
-                return false;
-            }
-            return true;
-        }
-
         // Preset Scenarios
         const SCENARIOS = {
             1: {
@@ -69,18 +54,6 @@
             renderCatalogTable();
             setupCharCounter();
             await loadSavedListenerProfile();
-            document.getElementById("listenerConsentCheck").addEventListener("change", event => {
-                if (event.target.checked) {
-                    try {
-                        sessionStorage.setItem("goalModeListenerConsent", "true");
-                    } catch (err) {
-                        event.target.checked = false;
-                        showToast(`Could not store consent for this browser session: ${err.message}`, "error");
-                    }
-                } else {
-                    clearListenerData(true);
-                }
-            });
             checkLocalAiStatus();
             loadScenario(1);
         };
@@ -101,31 +74,28 @@
 
         function switchTab(tabId) {
             const protoView = document.getElementById("prototypeTabView");
-            const overviewView = document.getElementById("overviewTabView");
             const chatView = document.getElementById("chatTabView");
             const protoBtn = document.getElementById("tabBtnPrototype");
-            const overviewBtn = document.getElementById("tabBtnOverview");
             const chatBtn = document.getElementById("tabBtnChat");
 
-            const activeClass = "px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white shadow-md transition flex items-center space-x-2";
+            const activeClass = "tab-active px-4 py-2 text-xs font-semibold rounded-lg text-white transition flex items-center space-x-2";
             const inactiveClass = "px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition flex items-center space-x-2 border border-slate-700";
 
             protoView.classList.add("hidden");
-            overviewView.classList.add("hidden");
             chatView.classList.add("hidden");
             protoBtn.className = inactiveClass;
-            overviewBtn.className = inactiveClass;
             chatBtn.className = inactiveClass;
+            protoBtn.setAttribute("aria-selected", "false");
+            chatBtn.setAttribute("aria-selected", "false");
 
             if (tabId === "prototype") {
                 protoView.classList.remove("hidden");
                 protoBtn.className = activeClass;
-            } else if (tabId === "overview") {
-                overviewView.classList.remove("hidden");
-                overviewBtn.className = activeClass;
+                protoBtn.setAttribute("aria-selected", "true");
             } else if (tabId === "chat") {
                 chatView.classList.remove("hidden");
                 chatBtn.className = activeClass;
+                chatBtn.setAttribute("aria-selected", "true");
                 const dot = document.getElementById("chatContextDot");
                 if (dot) dot.classList.add("hidden");
                 refreshChatContextDisplay();
@@ -210,7 +180,7 @@
                     <td class="p-2.5 font-mono text-blue-400 font-medium text-[11px]">${escapeHtml(item.id)}</td>
                     <td class="p-2.5 font-medium text-slate-200">
                         ${escapeHtml(item.title)}
-                        ${demoReferenceIds.has(String(item.id)) ? '<span class="ml-1.5 bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center">Sample reference (excluded)</span>' : ''}
+                        ${demoReferenceIds.has(String(item.id)) ? '<span class="ml-1.5 bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center">Sample reference</span>' : ''}
                         ${item.tags.includes("outside-discovery") || item.tags.includes("prompt-curated") ? '<span class="ml-1.5 bg-purple-900/60 text-purple-300 border border-purple-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center"><i class="fa-solid fa-sparkles text-purple-400 text-[8px] mr-1"></i>Prompt Match</span>' : ''}
                         ${item.tags.includes("budget-filler") ? '<span class="ml-1.5 bg-cyan-900/60 text-cyan-300 border border-cyan-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center"><i class="fa-solid fa-stopwatch text-cyan-400 text-[8px] mr-1"></i>Budget Fill</span>' : ''}
                         ${item.tags.includes("popular-track") ? '<span class="ml-1.5 bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[9px] px-1.5 py-0.5 rounded font-sans inline-flex items-center"><i class="fa-solid fa-fire text-amber-400 text-[8px] mr-1"></i>Popular Hit</span>' : ''}
@@ -356,7 +326,7 @@
         }
 
         function confirmPlaylistReview() {
-            if (!hasListenerConsent() || !PENDING_PLAYLIST?.tracks.length) return;
+            if (!PENDING_PLAYLIST?.tracks.length) return;
             NORMALIZED_PLAYLIST = JSON.parse(JSON.stringify(PENDING_PLAYLIST));
             PLAYLIST_ITEMS = NORMALIZED_PLAYLIST.tracks.map(track => ({
                 ...track,
@@ -380,7 +350,6 @@
         }
 
         async function loadPlaylistJsonFile() {
-            if (!hasListenerConsent()) return;
             const fileInput = document.getElementById("playlistJsonFileInput");
             const file = fileInput.files?.[0];
             if (!file) {
@@ -417,7 +386,6 @@
         }
 
         async function loadYouTubePlaylist() {
-            if (!hasListenerConsent()) return;
             const playlistUrl = document.getElementById("youtubePlaylistIdInput").value.trim();
             const status = document.getElementById("youtubeAuthStatus");
             const button = document.getElementById("loadYoutubeBtn");
@@ -457,7 +425,6 @@
         }
 
         function saveListenerProfile() {
-            if (!hasListenerConsent()) return;
             try {
                 const profile = {
                     playlist: NORMALIZED_PLAYLIST,
@@ -476,11 +443,9 @@
 
         async function loadSavedListenerProfile() {
             try {
-                if (sessionStorage.getItem("goalModeListenerConsent") !== "true") return;
                 const saved = sessionStorage.getItem("goalModeListenerProfile");
                 if (!saved) return;
                 const profile = JSON.parse(saved);
-                document.getElementById("listenerConsentCheck").checked = true;
                 document.getElementById("listenerTasteSummary").value = profile.tasteSummary || "";
                 document.getElementById("listenerExplicitPreferences").value = profile.explicitPreferences || "";
                 const hasConfirmedPreferences = Array.isArray(profile.confirmedLearnedPreferences);
@@ -518,14 +483,12 @@
             if (!skipConfirm && !confirm("Clear this session's playlist, profile, and learned taste preferences?")) return;
             try {
                 sessionStorage.removeItem("goalModeListenerProfile");
-                sessionStorage.removeItem("goalModeListenerConsent");
                 sessionStorage.removeItem("goalModePreviouslyRecommended");
                 sessionStorage.removeItem("goalModePreviouslyRecommendedTracks");
             } catch (err) {
                 showToast(`Could not clear saved listener data: ${err.message}`, "error");
                 return;
             }
-            document.getElementById("listenerConsentCheck").checked = false;
             document.getElementById("listenerTasteSummary").value = "";
             document.getElementById("listenerExplicitPreferences").value = "";
             document.getElementById("profileSaveStatus").textContent = "Not saved";
@@ -559,6 +522,17 @@
                 return JSON.parse(sessionStorage.getItem("goalModePreviouslyRecommended") || "[]");
             } catch {
                 return [];
+            }
+        }
+
+        function clearRecommendationHistory() {
+            if (!confirm("Clear previously recommended tracks for this session? Your playlist and profile will be kept.")) return;
+            try {
+                sessionStorage.removeItem("goalModePreviouslyRecommended");
+                sessionStorage.removeItem("goalModePreviouslyRecommendedTracks");
+                showToast("Recommendation history cleared. You can generate the queue again.", "success");
+            } catch (err) {
+                showToast(`Could not clear recommendation history: ${err.message}`, "error");
             }
         }
 
@@ -691,12 +665,11 @@
             const genreStatus = DEMO_PROFILE.genre_mapping_status;
             const mappedGenre = DEMO_PROFILE.matched_genre?.genre_name;
             const noGenreReferences = genreStatus === "matched" && !DEMO_PROFILE.tracks.some(track => track.profile_match.includes("top_genre"));
-            status.textContent = `Loaded sample #${profile.listener_id}. Artist: ${artistStatus}; genre: ${genreStatus}${mappedGenre ? ` (${mappedGenre})` : ""}${noGenreReferences ? ", no genre references among these matches" : ""}. ${DEMO_PROFILE.tracks.length} catalog matches are taste references excluded from new queues.`;
+            status.textContent = `Loaded sample #${profile.listener_id}. Artist: ${artistStatus}; genre: ${genreStatus}${mappedGenre ? ` (${mappedGenre})` : ""}${noGenreReferences ? ", no genre references among these matches" : ""}. ${DEMO_PROFILE.tracks.length} catalog matches are taste references, eligible when requesting the sample's top artist.`;
             status.className = "text-[10px] text-emerald-300";
         }
 
         async function loadDemoProfile() {
-            if (!hasListenerConsent()) return;
             const listenerId = Number(document.getElementById("demoProfileIdInput").value);
             if (!Number.isInteger(listenerId) || listenerId < 1 || listenerId > 4000) {
                 showToast("Enter a demo listener ID from 1 to 4,000.", "warning");
@@ -903,10 +876,18 @@
             );
         }
 
-        function getRecommendationExclusions(ids = []) {
+        function artistCreditMatches(credits, artist) {
+            if (typeof credits !== "string" || !artist) return false;
+            const escaped = artist.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            return new RegExp(`(?:^|,\\s*)${escaped}(?=\\s*(?:,|$))`, "i").test(credits);
+        }
+
+        function getRecommendationExclusions(ids = [], sampleArtist = null) {
             const excludedIds = new Set(ids.map(id => String(id)));
             PLAYLIST_ITEMS.forEach(track => excludedIds.add(`playlist:${track.id}`));
-            const demoTracks = DEMO_PROFILE?.tracks || [];
+            const demoTracks = (DEMO_PROFILE?.tracks || []).filter(
+                track => !sampleArtist || !artistCreditMatches(track.artist, sampleArtist)
+            );
             demoTracks.forEach(track => excludedIds.add(`db:${track.catalog_track_id}`));
             const knownTracks = [
                 ...PLAYLIST_ITEMS,
@@ -1101,7 +1082,6 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
         }
 
         async function loadMoreTracksForPrompt() {
-            if (!hasListenerConsent()) return;
             const goalText = document.getElementById("goalTextInput").value.trim();
             const budgetMins = parseInt(document.getElementById("budgetInput").value) || 30;
             const explicitExclusions = document.getElementById("exclusionsInput").value.trim();
@@ -1113,6 +1093,8 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
             }
 
             showToast(`Loading authentic tracks for "${goalText}" into candidate catalog...`, "info");
+            setLoading(true);
+            setGenerationProgress(12, "Asking the AI for matching tracks", "Catalog verification will follow");
             try {
                 const discovered = await fetchExternalDiscoveryTracks({
                     goalText,
@@ -1130,12 +1112,17 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                     });
                     document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} catalog tracks (${discovered.length} loaded from prompt)`;
                     renderCatalogTable();
+                    setGenerationProgress(100, "Prompt tracks loaded", `${discovered.length} verified tracks added to the candidate catalog`);
                     showToast(`Loaded ${discovered.length} songs for "${goalText}" into candidate catalog!`, "success");
                 } else {
+                    setGenerationProgress(100, "No new prompt tracks found", "The catalog did not return additional matches");
                     showToast("AI did not find any new matching tracks.", "warning");
                 }
             } catch (err) {
+                setGenerationProgress(100, "Prompt track loading failed", "No unverified tracks were added");
                 showToast(`Could not load tracks from the local AI service: ${err.message}`, "error");
+            } finally {
+                setTimeout(() => setLoading(false), 350);
             }
         }
 
@@ -1182,8 +1169,34 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
             return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
         }
 
+        function setGenerationProgress(percent, title, subtitle) {
+            const clamped = Math.max(0, Math.min(100, Number(percent) || 0));
+            const bar = document.getElementById("loadingProgressBar");
+            const label = document.getElementById("loadingProgressPercent");
+            if (bar && bar.style) {
+                bar.style.width = `${clamped}%`;
+                if (typeof bar.setAttribute === "function") bar.setAttribute("aria-valuenow", String(clamped));
+            }
+            if (label) label.textContent = `${clamped}%`;
+            const titleElement = document.getElementById("loadingStateTitle");
+            if (title && titleElement) titleElement.textContent = title;
+            const subtitleElement = document.getElementById("loadingStateSubtitle");
+            if (subtitle && subtitleElement) subtitleElement.textContent = subtitle;
+        }
+
+        async function yieldForProgressFrame() {
+            await new Promise(resolve => {
+                if (typeof requestAnimationFrame === "function") {
+                    requestAnimationFrame(() => resolve());
+                } else if (typeof setTimeout === "function") {
+                    setTimeout(resolve, 0);
+                } else {
+                    resolve();
+                }
+            });
+        }
+
         async function generateGoalQueue() {
-            if (!hasListenerConsent()) return;
             const goalText = document.getElementById("goalTextInput").value.trim();
             const budgetMins = Number(document.getElementById("budgetInput").value);
             const excludedTopics = document.getElementById("exclusionsInput").value
@@ -1204,14 +1217,28 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                 return;
             }
 
+            const sampleArtistReference = /\b(?:my|the)\s+(?:top|favorite|favourite)\s+artist\b/i;
+            const directSampleArtistRequest =
+                !/\b(?:similar|like|related|inspired|style)\b/i.test(goalText) &&
+                (/^(?:my|the)\s+(?:top|favorite|favourite)\s+artist[.!?]*$/i.test(goalText) ||
+                 /\b(?:songs?|tracks?|music|playlist)\s+(?:by|from)\s+(?:my|the)\s+(?:top|favorite|favourite)\s+artist\b/i.test(goalText));
+            const sampleArtist = directSampleArtistRequest ? DEMO_PROFILE?.profile?.top_artist?.trim() : null;
+            if (directSampleArtistRequest && !sampleArtist) {
+                showToast("Load a sample profile or name an artist in your goal.", "warning");
+                return;
+            }
+            const searchGoal = sampleArtist ? goalText.replace(sampleArtistReference, sampleArtist) : goalText;
             let exclusions;
+            let referenceExclusions;
             try {
-                exclusions = getRecommendationExclusions(getPreviouslyRecommendedIds());
+                exclusions = getRecommendationExclusions(getPreviouslyRecommendedIds(), sampleArtist);
+                if (sampleArtist) referenceExclusions = getRecommendationExclusions([], sampleArtist);
             } catch (err) {
                 showToast(`Could not read recommendation history: ${err.message}`, "error");
                 return;
             }
             setLoading(true);
+            setGenerationProgress(8, "Searching the catalog...", "Matching exact goal terms and exclusions");
             document.getElementById("loadingStateTitle").textContent = "Finding catalog tracks for your goal...";
             document.getElementById("loadingStateSubtitle").textContent = "Ranking goal matches, then filling with eligible tracks";
             const targetMs = budgetMins * 60000;
@@ -1221,7 +1248,7 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
             const seenTitles = new Set();
             const selectedIds = new Set();
             const recommendations = [];
-            const stats = { proposed: 0, verified: 0, excluded: 0, ai_proposed: 0, ai_ranked: 0, search_fill: 0, broad_fill: 0 };
+            const stats = { proposed: 0, verified: 0, excluded: 0, ai_proposed: 0, ai_ranked: 0, search_fill: 0, broad_fill: 0, artist_matches: 0, history_excluded: 0 };
             let totalMs = 0;
             let rankingError = "";
             let catalogError = "";
@@ -1260,10 +1287,24 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                     const titles = trackTitleKeys(item);
                     const identity = trackIdentityKey(item);
                     const searchText = `${item.title} ${item.artist} ${item.tags.join(" ")}`.toLowerCase();
-                    if (
+                    const matchesArtist = !sampleArtist || artistCreditMatches(item.artist, sampleArtist);
+                    const excludedByReference = referenceExclusions && (
+                        referenceExclusions.ids.has(String(item.id)) ||
+                        (identity && referenceExclusions.identities.has(identity)) ||
+                        titles.some(title => isExcludedTitle(title, referenceExclusions))
+                    );
+                    const excludedByHistoryOrReference =
                         exclusions.ids.has(String(item.id)) ||
                         (identity && exclusions.identities.has(identity)) ||
-                        titles.some(title => isExcludedTitle(title, exclusions) || seenTitles.has(title)) ||
+                        titles.some(title => isExcludedTitle(title, exclusions));
+                    if (sampleArtist && matchesArtist) {
+                        stats.artist_matches += 1;
+                        if (excludedByHistoryOrReference && !excludedByReference) stats.history_excluded += 1;
+                    }
+                    if (
+                        !matchesArtist ||
+                        excludedByHistoryOrReference ||
+                        titles.some(title => seenTitles.has(title)) ||
                         exclusionTokens.some(topic => searchText.includes(topic))
                     ) {
                         stats.excluded += 1;
@@ -1286,26 +1327,33 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
             try {
                 const preloadedRows = CATALOG_ITEMS.filter(item => item.isDiscoveredMatch && item.catalogMetadata)
                     .map(item => item.catalogMetadata);
-                let page = await fetchCatalogCandidates(goalText, excludedTopics);
+                let page = await fetchCatalogCandidates(searchGoal, excludedTopics, 0);
                 addRows(page.goal_candidates, "search");
+                setGenerationProgress(32, "Catalog matches found", `${stats.verified} usable tracks are being evaluated`);
+                await yieldForProgressFrame();
                 addRows(preloadedRows, "fallback");
                 addRows(page.fallback_candidates, "fallback");
-                try {
-                    const semanticRows = await fetchSemanticCatalogCandidates(goalText, excludedTopics, 40);
-                    addRows(semanticRows, "search");
-                } catch (err) {
-                    console.warn("Semantic catalog retrieval unavailable:", err);
+                if (!sampleArtist) {
+                    try {
+                        const semanticRows = await fetchSemanticCatalogCandidates(goalText, excludedTopics, 40);
+                        addRows(semanticRows, "search");
+                    } catch (err) {
+                        console.warn("Semantic catalog retrieval unavailable:", err);
+                    }
                 }
+                setGenerationProgress(42, "Ranking the best matches...", `${candidates.length} eligible tracks in the candidate pool`);
+                await yieldForProgressFrame();
 
                 const systemPrompt = `Rank catalog tracks for the listener's goal. The goal has priority over profile and playlist taste signals.
 Return only tracks that plausibly match the goal, ranked best first. Select only exact IDs from the candidate list.
-Do not invent tracks or select reference tracks. If none match, return an empty array.
+Do not invent tracks. ${sampleArtist ? "Sample reference tracks by the sample's top artist are eligible." : "Do not select reference tracks."} If none match, return an empty array.
 Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief goal-specific reason"}]}.`;
                 for (let pass = 0; pass < 3 && totalMs < targetMs; pass += 1) {
+                    setGenerationProgress(48 + (pass * 12), `AI ranking pass ${pass + 1} of 3`, `${recommendations.length} tracks selected so far`);
                     const pool = candidates.filter(candidate => !selectedIds.has(candidate.item.id)).slice(0, 40);
                     if (!pool.length) break;
                     const userPrompt = [
-                        `Goal: ${goalText}`,
+                        `Goal: ${searchGoal}`,
                         `Explicit exclusions: ${excludedTopics.join(", ") || "None"}`,
                         `Listener taste summary: ${listenerTasteSummary || "None"}`,
                         `Listener preferences: ${listenerPreferences || "None"}`,
@@ -1338,6 +1386,17 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                                 : "AI ranked this catalog track for the listening goal.";
                             selectCandidate(candidate, reason, "ai_ranked");
                         }
+                        if (recommendations.length) {
+                            renderResults({
+                                normalized_goal: goalText,
+                                preferred_topics: [goalText],
+                                excluded_topics: excludedTopics,
+                                recommendations,
+                                status: "generating",
+                                ai_comment: `${recommendations.length} tracks selected; generation is still in progress.`
+                            }, budgetMins, true, sampleArtist);
+                            await yieldForProgressFrame();
+                        }
                     } catch (err) {
                         console.error("Catalog ranking failed:", err);
                         rankingError = err.message;
@@ -1360,11 +1419,35 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                 }
 
                 fillFromCandidates();
-                while (totalMs < targetMs && page.next_offset !== null) {
+                if (recommendations.length) {
+                    setGenerationProgress(82, "Filling the listening target", `${formatDuration(totalMs)} of ${formatDuration(targetMs)} reached`);
+                    renderResults({
+                        normalized_goal: goalText,
+                        preferred_topics: [goalText],
+                        excluded_topics: excludedTopics,
+                        recommendations,
+                        status: "generating",
+                        ai_comment: `${recommendations.length} tracks selected; checking additional catalog pages if needed.`
+                    }, budgetMins, true, sampleArtist);
+                    await yieldForProgressFrame();
+                }
+                while (!sampleArtist && totalMs < targetMs && page.next_offset !== null) {
                     try {
-                        page = await fetchCatalogCandidates(goalText, excludedTopics, page.next_offset);
+                        page = await fetchCatalogCandidates(searchGoal, excludedTopics, page.next_offset);
                         addRows(page.fallback_candidates, "fallback");
                         fillFromCandidates();
+                        setGenerationProgress(86, "Loading more catalog tracks", `${recommendations.length} tracks selected`);
+                        if (recommendations.length) {
+                            renderResults({
+                                normalized_goal: goalText,
+                                preferred_topics: [goalText],
+                                excluded_topics: excludedTopics,
+                                recommendations,
+                                status: "generating",
+                                ai_comment: `${recommendations.length} tracks selected; generation is still in progress.`
+                            }, budgetMins, true, sampleArtist);
+                            await yieldForProgressFrame();
+                        }
                     } catch (err) {
                         console.error("Could not load additional catalog candidates:", err);
                         catalogError = err.message;
@@ -1377,6 +1460,8 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                     `Catalog candidates: ${stats.proposed} retrieved, ${stats.verified} with usable details and duration, ${stats.excluded} excluded or duplicate among returned tracks. Explicit exclusions are text-matched against available metadata during catalog search.`,
                     `AI proposed ${stats.ai_proposed}; selected ${stats.ai_ranked} AI-ranked, ${stats.search_fill} goal-search fill, and ${stats.broad_fill} broader fallback tracks.`,
                     `Audio: ${formatDuration(totalMs)} / ${formatDuration(targetMs)} minimum.`,
+                    sampleArtist ? `Only catalog tracks credited to the sample's top artist, ${sampleArtist}, were considered; matching sample references were eligible.` : "",
+                    sampleArtist ? `${stats.artist_matches} returned track${stats.artist_matches === 1 ? "" : "s"} credit${stats.artist_matches === 1 ? "s" : ""} that artist; ${stats.history_excluded} ${stats.history_excluded === 1 ? "was" : "were"} excluded by recommendation history${stats.history_excluded ? ". Use Clear recommendation history to allow repeats." : "."}` : "",
                     filled ? "The final full track may exceed the target." : "The catalog search did not return enough eligible audio to reach the target.",
                     rankingError ? `AI ranking failed: ${rankingError} Catalog search order was used instead.` : "",
                     catalogError ? `Additional catalog search failed: ${catalogError}` : ""
@@ -1390,7 +1475,9 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                     status: recommendations.length ? (stats.search_fill || stats.broad_fill ? "catalog_fill" : "discovered_match") : "no_match",
                     ai_comment: note
                 };
-                renderResults(data, budgetMins);
+                setGenerationProgress(100, "Queue ready", "Final exclusions and formatting complete");
+                await yieldForProgressFrame();
+                renderResults(data, budgetMins, false, sampleArtist);
                 if (!filled || rankingError || catalogError) {
                     showToast(filled ? "Queue filled using catalog fallback; see the recommendation note." : "The queue is shorter than requested; see the recommendation note.", "warning");
                 } else {
@@ -1412,7 +1499,7 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             }
         }
 
-        function renderResults(data, requestedBudget) {
+        function renderResults(data, requestedBudget, partial = false, sampleArtist = null) {
             document.getElementById("emptyState").classList.add("hidden");
             document.getElementById("outputContent").classList.remove("hidden");
 
@@ -1421,7 +1508,10 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             const status = data.status || "ok";
             statusTag.textContent = status.replace("_", " ").toUpperCase();
             
-            if (status === "ok") {
+            if (partial || status === "generating") {
+                statusTag.className = "bg-violet-900/60 text-violet-300 border border-violet-700/50 text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5";
+                statusTag.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles text-violet-400 text-[10px]"></i> BUILDING';
+            } else if (status === "ok") {
                 statusTag.className = "bg-emerald-900/60 text-emerald-300 border border-emerald-700/50 text-xs px-2.5 py-1 rounded-full font-mono";
             } else if (status === "prompt_expanded" || status === "discovered_match" || status === "outside_discovery") {
                 statusTag.className = "bg-purple-900/60 text-purple-300 border border-purple-700/50 text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5";
@@ -1458,10 +1548,10 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             let containsExcludedItem = false;
             const recommendations = filterExcludedRecommendations(
                 normalizeRecommendations(data.recommendations),
-                getRecommendationExclusions(getPreviouslyRecommendedIds())
+                getRecommendationExclusions(getPreviouslyRecommendedIds(), sampleArtist)
             );
             data.recommendations = recommendations;
-            rememberRecommendedIds(recommendations);
+            if (!partial) rememberRecommendedIds(recommendations);
 
             if (!recommendations.length) {
                 queueList.innerHTML = `<div class="p-4 bg-slate-900/70 rounded-lg border border-slate-800 text-xs text-slate-400 italic text-center">No audio recommendations match this goal and exclusion set.</div>`;
@@ -1539,47 +1629,50 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                 metricExclusion.className = "font-semibold text-emerald-400";
             }
 
-            // Raw JSON Output
-            document.getElementById("rawJsonResponse").textContent = JSON.stringify(data, null, 2);
+            if (!partial) {
+                // Raw JSON Output
+                document.getElementById("rawJsonResponse").textContent = JSON.stringify(data, null, 2);
 
-            // Synchronize with AI Taste Chat Tab
-            LAST_RECOMMENDATION_DATA = {
-                normalized_goal: data.normalized_goal || "Custom Goal",
-                preferred_topics: data.preferred_topics || [],
-                excluded_topics: data.excluded_topics || [],
-                budget_minutes: requestedBudget,
-                ai_comment: data.ai_comment || "",
-                recommendations: recommendations.map(r => {
-                    const found = CATALOG_ITEMS.find(c => c.id === r.content_id);
-                    return {
-                        id: r.content_id,
-                        title: found ? found.title : "Curated Selection",
-                        artist: found ? found.artist : "Artist",
-                        duration: found ? found.duration : 4,
-                        cover: found ? found.cover : "",
-                        reason: r.reason || ""
-                    };
-                }),
-                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            };
+                // Synchronize with AI Taste Chat Tab
+                LAST_RECOMMENDATION_DATA = {
+                    normalized_goal: data.normalized_goal || "Custom Goal",
+                    preferred_topics: data.preferred_topics || [],
+                    excluded_topics: data.excluded_topics || [],
+                    budget_minutes: requestedBudget,
+                    ai_comment: data.ai_comment || "",
+                    recommendations: recommendations.map(r => {
+                        const found = CATALOG_ITEMS.find(c => c.id === r.content_id);
+                        return {
+                            id: r.content_id,
+                            title: found ? found.title : "Curated Selection",
+                            artist: found ? found.artist : "Artist",
+                            duration: found ? found.duration : 4,
+                            cover: found ? found.cover : "",
+                            reason: r.reason || ""
+                        };
+                    }),
+                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                };
 
-            const chatDot = document.getElementById("chatContextDot");
-            if (chatDot) chatDot.classList.remove("hidden");
-            refreshChatContextDisplay();
+                const chatDot = document.getElementById("chatContextDot");
+                if (chatDot) chatDot.classList.remove("hidden");
+                refreshChatContextDisplay();
+            }
         }
 
         function setLoading(isLoading) {
             const btn = document.getElementById("generateBtn");
+            const clearHistoryBtn = document.getElementById("clearRecommendationHistoryBtn");
             const emptyState = document.getElementById("emptyState");
             const loadingState = document.getElementById("loadingState");
-            const outputContent = document.getElementById("outputContent");
+            if (clearHistoryBtn) clearHistoryBtn.disabled = isLoading;
 
             if (isLoading) {
                 btn.disabled = true;
                 btn.classList.add("opacity-50", "cursor-not-allowed");
                 emptyState.classList.add("hidden");
-                outputContent.classList.add("hidden");
                 loadingState.classList.remove("hidden");
+                setGenerationProgress(4, "Preparing generation", "Validating goal and loading the catalog");
             } else {
                 btn.disabled = false;
                 btn.classList.remove("opacity-50", "cursor-not-allowed");
@@ -1739,6 +1832,84 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             }
         }
 
+        function normalizeChatResponse(response) {
+            if (!response || typeof response.reply !== "string" || !response.reply.trim()) {
+                throw new Error("The AI returned an invalid chat response.");
+            }
+
+            const text = response.reply.trim();
+            const unwrapped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+            if (/^\s*\{\s*"/.test(unwrapped)) {
+                let nested;
+                try {
+                    nested = JSON.parse(unwrapped);
+                } catch {
+                    const match = /"reply"\s*:\s*"([\s\S]*?)"\s*(?=,\s*"(?:extracted_taste_insights|suggested_recommender_action)"\s*:|}\s*$)/.exec(unwrapped);
+                    if (!match) throw new Error("The AI returned malformed chat JSON.");
+                    try {
+                        const escapedReply = match[1].replace(/\\[\s\S]|["\r\n\t]/g, character =>
+                            character.startsWith("\\") ? character : JSON.stringify(character).slice(1, -1)
+                        );
+                        const reply = JSON.parse(`"${escapedReply}"`);
+                        const repaired = unwrapped.slice(0, match.index) + `"reply":${JSON.stringify(reply)}` +
+                            unwrapped.slice(match.index + match[0].length);
+                        nested = JSON.parse(repaired);
+                        console.warn("Recovered a chat response with unescaped quotes or line breaks.");
+                    } catch {
+                        throw new Error("The AI returned malformed chat JSON.");
+                    }
+                }
+                if (!nested || typeof nested.reply !== "string" || !nested.reply.trim()) {
+                    throw new Error("The AI returned an invalid chat response.");
+                }
+                response = {
+                    ...response,
+                    ...nested
+                };
+                if (/^\s*(?:```(?:json)?\s*)?\{\s*"/i.test(response.reply)) {
+                    throw new Error("The AI returned nested chat JSON.");
+                }
+            }
+            return response;
+        }
+
+        async function requestChatResponse(systemInstruction, chatPrompt) {
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const instruction = attempt === 0
+                    ? systemInstruction
+                    : `${systemInstruction}\n\nYour previous response was invalid. Return a single valid JSON object; escape all quotation marks inside strings.`;
+                const response = await requestAiJson(instruction, chatPrompt, "chat");
+                try {
+                    return normalizeChatResponse(response);
+                } catch (error) {
+                    if (attempt === 1) throw error;
+                    console.warn("Retrying invalid chat response:", error);
+                }
+            }
+        }
+
+        function renderChatMarkdown(text) {
+            if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+                showToast("Markdown formatting is unavailable; showing plain text.", "warning");
+                return `<p class="whitespace-pre-wrap">${escapeHtml(text)}</p>`;
+            }
+            return DOMPurify.sanitize(marked.parse(text), {
+                FORBID_TAGS: ["img", "style", "iframe"]
+            });
+        }
+
+        function answerTopArtistQuestion(text) {
+            if (!/^(?:who|what)(?:'s| is) (?:my|the sample(?: profile)?(?:'s)?) (?:top|favorite|favourite) artist(?: currently| right now)?[?.!]*$/i.test(text.trim())) {
+                return null;
+            }
+            const artist = DEMO_PROFILE?.profile?.top_artist?.trim();
+            if (!artist) {
+                return { reply: "I don't have an account-based top artist. You can load a sample profile to see its top artist, or tell me about your favorite artists." };
+            }
+            const safeArtist = artist.replace(/[\\`*_{}\[\]()#+.!|>-]/g, "\\$&");
+            return { reply: `The loaded **sample profile** lists **${safeArtist}** as its top artist. It's synthetic, so it doesn't tell me your real favorite artist.` };
+        }
+
         function appendMessageToFeed(role, text, actionCard = null) {
             const container = document.getElementById("chatMessagesContainer");
             if (!container) return;
@@ -1781,7 +1952,7 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             msgDiv.innerHTML = `
                 ${avatar}
                 <div class="${isUser ? 'bg-blue-600 text-white rounded-2xl rounded-tr-none' : 'bg-slate-900/90 border border-slate-700/80 rounded-2xl rounded-tl-none text-slate-200'} p-3.5 text-xs max-w-xl shadow-sm space-y-1 leading-relaxed">
-                    <p class="whitespace-pre-wrap">${escapeHtml(text)}</p>
+                    <div class="${isUser ? '' : 'chat-markdown'}">${isUser ? `<p class="whitespace-pre-wrap">${escapeHtml(text)}</p>` : renderChatMarkdown(text)}</div>
                     ${actionHtml}
                 </div>
             `;
@@ -1804,7 +1975,6 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             const input = document.getElementById("chatTextInput");
             const userText = input ? input.value.trim() : "";
             if (!userText) return;
-            if (!hasListenerConsent()) return;
 
             appendMessageToFeed("user", userText);
             input.value = "";
@@ -1837,18 +2007,19 @@ CURRENT RECOMMENDER & SESSION CONTEXT:
 - Playlist Loaded: ${playlistCount > 0 ? `Yes (${playlistCount} songs)` : 'No (direct prompt mode)'}
 - Listener-Approved Taste Summary: "${listenerTasteSummary}"
 - Listener-Provided Preferences: "${listenerPreferences}"
-- Loaded demo-profile taste signals (sample data; top artist, genre, and mood only): ${demoTasteContext}
+- Loaded demo-profile taste signals (synthetic sample, not the listener's account): ${demoTasteContext}
 - Profile-matched catalog examples (use only when relevant): ${demoCatalogContext}
 - Current Active Queue Recommendations: ${JSON.stringify(currentQueueSnapshot.map(t => ({ title: t.title, artist: t.artist, duration: t.duration, reason: t.reason })))}
 - Treat the active queue above as authoritative context. An empty database search does not mean the queue is empty; use the actual queue items to answer questions about these recommendations.
 - Listener-Confirmed Chat Preferences: ${JSON.stringify(CONFIRMED_TASTE_INSIGHTS)}
 
 MANDATORY RULES:
-1. Be musically knowledgeable, conversational, concise, and helpful.
-2. If the user asks about specific tracks in their queue, reference the actual titles, artists, durations, and curation reasons from the context above.
-3. SUGGEST TASTE INSIGHTS: If the listener shares a like, dislike, favorite artist, subgenre preference, or track critique (e.g. "I love upbeat synth", "Dislike acoustic guitar", "Too repetitive", "Need high energy for running"), identify 1 to 3 concise suggestions in "extracted_taste_insights". The listener must confirm each suggestion before it affects recommendations or is saved; do not imply an unconfirmed suggestion is already applied.
-4. SUGGEST REFINED GOALS: If the listener asks for adjustments or if their feedback warrants a modified Goal Mode prompt, provide a "suggested_recommender_action" with a concrete "goal", "budget" (number), and "exclusions" string. Otherwise set it to null.
-5. Do not repeat prior Concierge replies from the conversation history. Answer the new message directly and avoid reusing prior full sentences or openings unless needed for accuracy.
+1. Be musically knowledgeable, conversational, concise, and helpful. Use Markdown in the reply when it improves readability.
+2. Base claims about the listener only on the supplied profile, confirmed preferences, and conversation. The sample profile's top artist is a synthetic profile field, not evidence about the listener's real favorite artist or their listening history. If no sample is loaded and no artist is explicitly stated, say you do not know. Never infer a top artist from catalog search results or queue tracks. Do not invent songs, queue contents, emotional reactions, or audio characteristics. Correct earlier unsupported claims when asked.
+3. If the user asks about specific tracks in their queue, reference only the actual titles, artists, durations, and curation reasons in the active queue. If the queue is empty, say so. Catalog matches and profile reference tracks are not queue items or listening history.
+4. SUGGEST TASTE INSIGHTS: Only suggest preferences that the listener explicitly shares, such as a like, dislike, favorite artist, subgenre preference, or track critique. Do not turn sample data, model guesses, or questions into preferences. The listener must confirm each suggestion before it affects recommendations or is saved.
+5. SUGGEST REFINED GOALS: If the listener asks for adjustments or if their feedback warrants a modified Goal Mode prompt, provide a "suggested_recommender_action" with a concrete "goal", "budget" (number), and "exclusions" string. Otherwise set it to null.
+6. Answer the latest message directly. Correct information may be repeated when answering a follow-up.
 
 Return valid JSON strictly matching this schema:
 {
@@ -1874,31 +2045,15 @@ ${JSON.stringify(currentQueueSnapshot.map(t => ({
                 reason: t.reason
             })))}
 
+SAMPLE PROFILE (synthetic, not the listener's account):
+${demoTasteContext}
+
 NEW LISTENER MESSAGE:
 "${userText}"
 `;
 
             try {
-                let response = await requestAiJson(systemInstruction, chatPrompt, "chat");
-                if (repeatsRecentChatText(response.reply)) {
-                    const recentAssistantReplies = CHAT_HISTORY
-                        .filter(message => message.role === "assistant")
-                        .slice(-3)
-                        .map(message => message.text);
-                    response = await requestAiJson(
-                        `${systemInstruction}\n\nRETRY: Your previous answer repeated recent text. Write a new, directly relevant response without repeating it.`,
-                        `${chatPrompt}\n\nRECENT ASSISTANT REPLIES TO AVOID:\n${JSON.stringify(recentAssistantReplies)}`,
-                        "chat"
-                    );
-                    if (repeatsRecentChatText(response.reply)) {
-                        appendMessageToFeed(
-                            "assistant",
-                            "I repeated a recent reply instead of answering that. Please rephrase your question or ask a more specific follow-up."
-                        );
-                        showToast("The assistant repeated a recent reply. Please try rephrasing.", "warning");
-                        return;
-                    }
-                }
+                const response = answerTopArtistQuestion(userText) || await requestChatResponse(systemInstruction, chatPrompt);
                 
                 CHAT_HISTORY.push({ role: "user", text: userText });
                 CHAT_HISTORY.push({ role: "assistant", text: response.reply });
@@ -1922,45 +2077,15 @@ NEW LISTENER MESSAGE:
 
             } catch (err) {
                 console.error("Chat error:", err);
-                appendMessageToFeed("assistant", `I ran into an issue connecting with the Cloudflare AI Worker: ${err.message}. Check the Worker URL and Docker services, then try again.`);
-                showToast(`Chat error: ${err.message}`, "error");
+                appendMessageToFeed("assistant", "I couldn't prepare a reply. Please try again; if the issue persists, check the AI service.");
+                showToast("Could not prepare a chat reply. Check the console for details.", "error");
             } finally {
-                if (typingEl) typingEl.classList.remove("hidden");
+                if (typingEl) typingEl.classList.add("hidden");
                 if (sendBtn) {
                     sendBtn.disabled = false;
                     sendBtn.classList.remove("opacity-50", "cursor-not-allowed");
                 }
             }
-        }
-
-        function normalizeChatText(text) {
-            return typeof text === "string"
-                ? text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
-                : "";
-        }
-
-        function repeatsRecentChatText(reply) {
-            const normalizedReply = normalizeChatText(reply);
-            if (!normalizedReply) return false;
-
-            const recentReplies = CHAT_HISTORY
-                .filter(message => message.role === "assistant")
-                .slice(-3)
-                .map(message => message.text);
-            if (recentReplies.some(previous => normalizeChatText(previous) === normalizedReply)) {
-                return true;
-            }
-
-            const recentSentences = new Set(
-                recentReplies.flatMap(previous =>
-                    previous.split(/[.!?\n]+/)
-                        .map(normalizeChatText)
-                        .filter(sentence => sentence.length >= 50)
-                )
-            );
-            return reply.split(/[.!?\n]+/)
-                .map(normalizeChatText)
-                .some(sentence => sentence.length >= 50 && recentSentences.has(sentence));
         }
 
         function applyChatSuggestionToRecommender(encodedGoal, budget, encodedExclusions, autoGenerate = false) {

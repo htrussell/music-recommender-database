@@ -70,7 +70,7 @@ demo_profiles_available = False
 
 
 class CatalogToolRequest(BaseModel):
-    tool: Literal["search_tracks", "search_track_ids", "verify_tracks", "search_albums", "compare_genres"]
+    tool: Literal["search_tracks", "search_track_ids", "verify_tracks", "search_artists", "search_albums", "compare_genres"]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -457,6 +457,33 @@ def run_verify_tracks(arguments: dict[str, Any]) -> list[dict[str, Any]]:
     return verified
 
 
+def run_search_artists(arguments: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    query = read_text(arguments, "query")
+    if not query:
+        raise HTTPException(status_code=422, detail="Artist search requires a non-empty query.")
+    if connection is None:
+        raise HTTPException(status_code=503, detail="DuckDB catalog has not finished loading.")
+    return rows_from_cursor(
+        connection.execute(
+            """
+            SELECT artists.artist_id, artists.artist_name, artists.artist_country,
+                artists.artist_popularity,
+                string_agg(DISTINCT genre.genre_name, ', ' ORDER BY genre.genre_name) AS catalog_tags
+            FROM artists
+            LEFT JOIN artist_genres ON artists.artist_id = artist_genres.artist_id
+            LEFT JOIN genre ON artist_genres.genre_id = genre.genre_id
+            WHERE contains(lower(artists.artist_name), lower(?))
+            GROUP BY artists.artist_id, artists.artist_name, artists.artist_country,
+                artists.artist_popularity
+            ORDER BY CASE WHEN lower(artists.artist_name) = lower(?) THEN 0 ELSE 1 END,
+                artists.artist_popularity DESC NULLS LAST, artists.artist_id
+            LIMIT ?
+            """,
+            [query, query, limit],
+        )
+    )
+
+
 def run_search_albums(arguments: dict[str, Any], limit: int) -> list[dict[str, Any]]:
     query = read_text(arguments, "query")
     genre = read_text(arguments, "genre")
@@ -702,6 +729,7 @@ def query_catalog(request: CatalogToolRequest) -> dict[str, Any]:
             "limit",
         },
         "verify_tracks": {"tracks"},
+        "search_artists": {"query", "limit"},
         "search_albums": {
             "query",
             "genre",
@@ -725,6 +753,8 @@ def query_catalog(request: CatalogToolRequest) -> dict[str, Any]:
             rows = run_search_track_ids(arguments, limit)
         elif request.tool == "verify_tracks":
             rows = run_verify_tracks(arguments)
+        elif request.tool == "search_artists":
+            rows = run_search_artists(arguments, limit)
         elif request.tool == "search_albums":
             rows = run_search_albums(arguments, limit)
         else:

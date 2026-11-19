@@ -13,61 +13,58 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles.css?v=chat-markdown-1">
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+<body class="app-shell bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-violet-500 selection:text-white">
 
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full"></div>
 
     <!-- Navigation Header -->
-    <header class="bg-slate-800/95 backdrop-blur border-b border-slate-700 px-6 py-4 flex flex-wrap justify-between items-center shadow-lg sticky top-0 z-40">
+    <header class="app-header px-4 sm:px-6 py-4 flex flex-wrap justify-between items-center sticky top-0 z-40">
         <div class="flex items-center space-x-3">
-            <div class="bg-blue-600 text-white px-2.5 py-1.5 rounded-lg font-bold text-lg tracking-wider shadow-md shadow-blue-900/40">
+            <div class="brand-mark text-white px-2.5 py-1.5 rounded-lg font-bold text-lg tracking-wider">
                 MUSIC
             </div>
             <div>
                 <h1 class="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                    Goal Mode AI Prototype
-                    <span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-700/60 px-2 py-0.5 rounded font-mono font-medium">v3.0</span>
+                    Goal Mode
+                    <span class="text-[10px] bg-violet-950/70 text-violet-200 border border-violet-400/30 px-2 py-0.5 rounded-full font-mono font-medium">BETA</span>
                 </h1>
-                <p class="text-xs text-slate-400">Time-Budgeted Audio Recommendation Engine • Cloudflare AI with local embedding model provisioned</p>
+                <p class="text-xs text-slate-400">Build a listening queue around your time, mood, and music.</p>
             </div>
         </div>
 
         <!-- Tab Switching Controls -->
-        <div class="flex items-center space-x-2 mt-3 sm:mt-0">
+        <div class="flex items-center gap-2 mt-3 sm:mt-0" role="tablist" aria-label="Music tools">
             <button id="tabBtnPrototype" onclick="switchTab('prototype')" 
-                class="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white shadow-md transition flex items-center space-x-2">
-                <i class="fa-solid fa-sliders"></i>
-                <span>Interactive Prototype</span>
+                class="tab-active px-4 py-2 text-xs font-semibold rounded-lg text-white transition flex items-center space-x-2" role="tab" aria-selected="true">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>Goal Queue</span>
             </button>
             <button id="tabBtnChat" onclick="switchTab('chat')" 
-                class="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition flex items-center space-x-2 border border-slate-700">
+                class="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition flex items-center space-x-2 border border-slate-700" role="tab" aria-selected="false">
                 <i class="fa-solid fa-comments"></i>
-                <span>AI Taste Chat</span>
+                <span>Taste Chat</span>
                 <span id="chatContextDot" class="hidden w-2 h-2 rounded-full bg-purple-400 animate-pulse" title="New queue ready for discussion"></span>
-            </button>
-            <button id="tabBtnOverview" onclick="switchTab('overview')" 
-                class="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition flex items-center space-x-2 border border-slate-700">
-                <i class="fa-solid fa-book-open"></i>
-                <span>Project Overview & Strategy</span>
             </button>
         </div>
     </header>
 
-    <!-- TAB 1: INTERACTIVE PROTOTYPE -->
-    <main id="prototypeTabView" class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 max-w-7xl mx-auto w-full">
+    <!-- Goal Queue -->
+    <main id="prototypeTabView" class="flex-1 grid grid-cols-1 xl:grid-cols-12 xl:items-start gap-5 p-4 sm:p-6 max-w-screen-2xl mx-auto w-full" role="tabpanel" aria-labelledby="tabBtnPrototype">
         
         <!-- Left Column: Input Control Panel -->
-        <section class="lg:col-span-5 bg-slate-800/80 border border-slate-700 rounded-xl p-5 flex flex-col justify-between shadow-md space-y-4">
+        <section class="xl:col-span-5 glass-panel rounded-2xl p-4 sm:p-5 flex flex-col shadow-xl space-y-4">
             <div class="space-y-4">
                 <div class="border-b border-slate-700 pb-3 flex justify-between items-center">
                     <div>
                         <h2 class="text-sm font-semibold text-white flex items-center">
-                            <i class="fa-solid fa-sliders text-blue-400 mr-2"></i> Listener Input Controls
+                            <i class="fa-solid fa-sliders text-cyan-300 mr-2"></i> Shape your listening session
                         </h2>
-                        <p class="text-xs text-slate-400 mt-0.5">Configure listening goals, playlist imports, and candidate music.</p>
+                        <p class="text-xs text-slate-400 mt-0.5">Set a goal, choose a time, and add music you already enjoy.</p>
                     </div>
                     <span id="apiStatusBadge" class="bg-blue-900/50 text-blue-300 border border-blue-700/50 px-2 py-0.5 rounded text-[10px] flex items-center">
                         <i class="fa-solid fa-microchip mr-1"></i> Ollama via Docker
@@ -101,21 +98,17 @@
                     </div>
                 </div>
 
-                <section class="p-3 bg-blue-950/30 rounded-lg border border-blue-800/50 space-y-2">
-                    <h3 class="text-xs font-semibold text-blue-200 flex items-center"><i class="fa-solid fa-shield-halved mr-1.5"></i> Listener data & consent</h3>
-                    <p class="text-[10px] text-slate-300 leading-relaxed">Playlist and profile data are stored only in this browser tab's session when you choose Save. Public playlist links are read by the local backend. Recommendation and chat prompts, approved profile details, and relevant catalog results are sent to the Cloudflare AI Worker. The local backend reads the catalog through a read-only database role. Listener profile data is not stored in the music catalog.</p>
-                    <label class="flex items-start gap-2 text-[10px] text-slate-300">
-                        <input id="listenerConsentCheck" type="checkbox" class="mt-0.5 rounded bg-slate-800 border-slate-600 text-blue-600 focus:ring-0">
-                        <span>I consent to sending my listening goals, chat, approved profile details, and relevant catalog results to the Cloudflare AI Worker, and importing playlist data from YouTube for this demo.</span>
-                    </label>
+                <section class="p-3 bg-cyan-950/20 rounded-xl border border-cyan-400/20 space-y-1.5">
+                    <h3 class="text-xs font-semibold text-cyan-100 flex items-center"><i class="fa-solid fa-shield-halved mr-1.5 text-cyan-300"></i> Your data, at a glance</h3>
+                    <p class="text-[10px] text-slate-300 leading-relaxed">Profile and playlist details remain in this browser session; “Save for this session” keeps them available in session storage. Goal and chat prompts, profile details you provide, and relevant catalog matches are sent to the AI service to generate responses. Public YouTube playlists are read by the local app; listener profiles are not written to the music catalog. Use “Clear listener data” to remove session data.</p>
                 </section>
 
-                <section class="p-3 bg-slate-900/60 rounded-lg border border-slate-700/80 space-y-2">
+                <section class="p-3 bg-slate-900/50 rounded-xl border border-slate-700/70 space-y-2">
                     <div class="flex items-center justify-between">
                         <h3 class="text-xs font-semibold text-slate-200">Streaming-habits demo profile</h3>
                         <span class="text-[9px] text-amber-300">Synthetic sample · not an account</span>
                     </div>
-                    <p class="text-[10px] text-slate-400 leading-relaxed">Load a sample listener by ID (1–4,000). Tracks matched to its top artist and genre are taste references, not listening history, and are excluded from new queues. Top artist, genre, mood, and matching catalog examples may be shared with the AI; demographics and usage statistics stay in this browser.</p>
+                    <p class="text-[10px] text-slate-400 leading-relaxed">Load a synthetic listener (ID 1–4,000) to explore artist and genre matches. Reference tracks can appear when you request the sample's top artist.</p>
                     <div class="flex gap-2">
                         <label class="sr-only" for="demoProfileIdInput">Demo listener ID</label>
                         <input id="demoProfileIdInput" type="number" min="1" max="4000" value="1" aria-label="Demo listener ID"
@@ -129,7 +122,7 @@
                         class="hidden w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] py-1.5 rounded border border-slate-700 transition">Clear demo profile</button>
                 </section>
 
-                <section class="p-3 bg-slate-900/60 rounded-lg border border-slate-700/80 space-y-2">
+                <section class="p-3 bg-slate-900/50 rounded-xl border border-slate-700/70 space-y-2">
                     <div class="flex items-center justify-between">
                         <h3 class="text-xs font-semibold text-slate-200">Listener taste profile</h3>
                         <span id="profileSaveStatus" class="text-[9px] text-slate-400">Not saved</span>
@@ -167,7 +160,7 @@
 
                 <!-- Quick Preset Scenarios -->
                 <div>
-                    <label class="block text-xs font-medium text-slate-300 mb-1">Preset Scenarios (Quick Test)</label>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Try a starting point</label>
                     <div class="grid grid-cols-3 gap-2">
                         <button onclick="loadScenario(1)" class="bg-slate-700/80 hover:bg-slate-600 text-[11px] text-slate-200 py-1.5 px-2 rounded border border-slate-600 transition text-left truncate">
                             1. Indie Discovery
@@ -184,7 +177,7 @@
                 <!-- Goal Text Input -->
                 <div>
                     <div class="flex justify-between items-center mb-1">
-                        <label for="goalTextInput" class="text-xs font-medium text-slate-300">Goal Description</label>
+                        <label for="goalTextInput" class="text-xs font-medium text-slate-300">What are you in the mood for?</label>
                         <span id="charCounter" class="text-[10px] text-slate-400 font-mono">0 / 500</span>
                     </div>
                     <textarea id="goalTextInput" rows="3" maxlength="500" placeholder="e.g., Find calm instrumental music for reading..."
@@ -194,13 +187,13 @@
                 <!-- Budget & Exclusions Controls -->
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label for="budgetInput" class="block text-xs font-medium text-slate-300 mb-1">Minimum Duration (Mins)</label>
+                        <label for="budgetInput" class="block text-xs font-medium text-slate-300 mb-1">Listening time (minutes)</label>
                         <input type="number" id="budgetInput" min="1" max="120" value="30"
                             class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500 transition">
                         <p class="text-[10px] text-slate-400 mt-1">The final full song may exceed this target.</p>
                     </div>
                     <div>
-                        <label for="exclusionsInput" class="block text-xs font-medium text-slate-300 mb-1">Explicit Exclusions</label>
+                        <label for="exclusionsInput" class="block text-xs font-medium text-slate-300 mb-1">Leave out</label>
                         <input type="text" id="exclusionsInput" placeholder="e.g., country, fiction, holiday"
                             class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 transition">
                     </div>
@@ -209,23 +202,27 @@
             </div>
 
             <!-- Submit Action -->
-            <div class="pt-3 border-t border-slate-700">
+            <div class="pt-3 border-t border-slate-700/70">
                 <button id="generateBtn" onclick="generateGoalQueue()" 
-                    class="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-xs sm:text-sm transition flex items-center justify-center space-x-2 shadow-lg shadow-blue-900/40">
+                    class="primary-action w-full text-white font-semibold py-2.5 rounded-xl text-xs sm:text-sm transition flex items-center justify-center space-x-2">
                     <i class="fa-solid fa-wand-magic-sparkles"></i>
                     <span>Generate Goal Queue</span>
+                </button>
+                <button id="clearRecommendationHistoryBtn" type="button" onclick="clearRecommendationHistory()"
+                    class="mt-2 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Clear recommendation history
                 </button>
             </div>
         </section>
 
         <!-- Right Column: Results & AI Queue -->
-        <section class="lg:col-span-7 space-y-6 flex flex-col">
+        <section class="xl:col-span-7 space-y-5 flex flex-col">
             
             <!-- Output Panel -->
-            <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-5 flex-1 flex flex-col shadow-md">
+            <div class="glass-panel rounded-2xl p-4 sm:p-5 min-h-[24rem] flex-1 flex flex-col shadow-xl">
                 <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4">
                     <h2 class="text-sm font-semibold text-white flex items-center">
-                        <i class="fa-solid fa-list-check text-blue-400 mr-2"></i> Generated Audio Queue
+                        <i class="fa-solid fa-list-check text-violet-300 mr-2"></i> Your listening queue
                     </h2>
                     <div id="statusTag" class="bg-slate-700 text-slate-300 text-xs px-2.5 py-1 rounded-full font-mono">
                         Ready
@@ -234,16 +231,26 @@
 
                 <!-- Placeholder state -->
                 <div id="emptyState" class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-500">
-                    <i class="fa-solid fa-headphones text-4xl mb-3 text-slate-600"></i>
-                    <p class="text-sm font-medium">No active goal queue generated yet.</p>
-                    <p class="text-xs text-slate-400 max-w-sm mt-1">Enter a listening goal and click "Generate Goal Queue" to rank catalog tracks and fill the minimum duration.</p>
+                    <i class="fa-solid fa-headphones text-4xl mb-3 text-violet-300/70"></i>
+                    <p class="text-sm font-medium text-slate-300">Your next listening session starts here.</p>
+                    <p class="text-xs text-slate-400 max-w-sm mt-1">Describe the sound you want and choose a listening time. We’ll find tracks from the available catalog.</p>
                 </div>
 
                 <!-- Loading Spinner -->
-                <div id="loadingState" class="hidden flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
-                    <i class="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500 mb-3"></i>
-                    <p class="text-sm font-medium text-slate-200" id="loadingStateTitle">Parsing goal & evaluating candidate pool...</p>
-                    <p class="text-xs text-slate-400 mt-1" id="loadingStateSubtitle">Enforcing budget constraints & topic exclusions</p>
+                <div id="loadingState" class="hidden flex-none px-5 py-4 border-b border-slate-700/70 bg-slate-900/70">
+                    <div class="flex items-center gap-3">
+                        <i class="fa-solid fa-circle-notch fa-spin text-xl text-violet-400"></i>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center justify-between gap-3">
+                                <p class="text-sm font-medium text-slate-200 truncate" id="loadingStateTitle">Parsing goal & evaluating candidate pool...</p>
+                                <span id="loadingProgressPercent" class="text-xs font-mono text-violet-300">0%</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-0.5" id="loadingStateSubtitle">Enforcing budget constraints & topic exclusions</p>
+                        </div>
+                    </div>
+                    <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-800 border border-slate-700/80">
+                        <div id="loadingProgressBar" class="h-full w-0 rounded-full bg-gradient-to-r from-violet-600 via-fuchsia-500 to-cyan-400 transition-all duration-500" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+                    </div>
                 </div>
 
                 <!-- AI Output Content Container -->
@@ -283,8 +290,8 @@
                             <span id="metricExclusion" class="font-semibold text-emerald-400">Text check</span>
                         </div>
                         <div class="bg-slate-900/60 p-2 rounded border border-slate-700/50">
-                            <span class="text-slate-400 text-[10px] block">History Override</span>
-                            <span id="metricHistory" class="font-semibold text-blue-400">Active</span>
+                            <span class="text-slate-400 text-[10px] block">Repeat Prevention</span>
+                            <span id="metricHistory" class="font-semibold text-blue-400">On</span>
                         </div>
                     </div>
 
@@ -353,13 +360,13 @@
     </main>
 
     <!-- TAB 2: AI TASTE CHAT & PREFERENCE DIALOGUE -->
-    <main id="chatTabView" class="hidden flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 max-w-7xl mx-auto w-full">
+    <main id="chatTabView" class="hidden flex-1 grid grid-cols-1 xl:grid-cols-12 gap-5 p-4 sm:p-6 max-w-screen-2xl mx-auto w-full" role="tabpanel" aria-labelledby="tabBtnChat">
         
         <!-- Left Column: Synchronized Recommender Context & Taste Notes -->
-        <section class="lg:col-span-4 space-y-4 flex flex-col">
+        <section class="xl:col-span-4 space-y-4 flex flex-col">
             
             <!-- Context Card -->
-            <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-4 shadow-md space-y-3">
+            <div class="glass-panel rounded-2xl p-4 shadow-xl space-y-3">
                 <div class="flex items-center justify-between border-b border-slate-700 pb-2.5">
                     <h2 class="text-xs font-semibold text-white flex items-center">
                         <i class="fa-solid fa-satellite-dish text-blue-400 mr-2"></i> Synced Goal State
@@ -395,7 +402,7 @@
             </div>
 
             <!-- Conversational Preference Review -->
-            <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-4 shadow-md space-y-3 flex-1 flex flex-col justify-between">
+            <div class="glass-panel rounded-2xl p-4 shadow-xl space-y-3 flex-1 flex flex-col justify-between">
                 <div class="space-y-2">
                     <div class="flex items-center justify-between border-b border-slate-700 pb-2">
                         <h3 class="text-xs font-semibold text-white flex items-center">
@@ -437,7 +444,7 @@
         </section>
 
         <!-- Right Column: Interactive Chat Interface -->
-        <section class="lg:col-span-8 bg-slate-800/80 border border-slate-700 rounded-xl flex flex-col shadow-md overflow-hidden min-h-[600px]">
+        <section class="xl:col-span-8 glass-panel rounded-2xl flex flex-col shadow-xl overflow-hidden min-h-[28rem] xl:min-h-[70vh]">
             
             <!-- Chat Header -->
             <div class="px-5 py-3.5 border-b border-slate-700 flex justify-between items-center bg-slate-800/95">
@@ -480,7 +487,7 @@
             </div>
 
             <!-- Chat Message Feed -->
-            <div id="chatMessagesContainer" class="flex-1 p-5 overflow-y-auto space-y-4 max-h-[500px]">
+            <div id="chatMessagesContainer" class="flex-1 p-5 overflow-y-auto space-y-4 max-h-[min(50vh,500px)]">
                 <div class="flex items-start space-x-3">
                     <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[11px] flex-shrink-0 mt-0.5 shadow">
                         <i class="fa-solid fa-headphones"></i>
@@ -508,7 +515,7 @@
                     </button>
                 </form>
                 <div class="flex items-center justify-between mt-2 px-1 text-[10px] text-slate-400">
-                    <span>Cloudflare AI • Read-only music catalog access</span>
+                    <span>AI-powered chat • Read-only music catalog access</span>
                     <span id="chatTypingIndicator" class="hidden text-purple-400 font-mono animate-pulse">
                         <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> AI Concierge is reflecting...
                     </span>
@@ -517,31 +524,13 @@
         </section>
     </main>
 
-    <!-- TAB 3: PROJECT OVERVIEW & STRATEGY -->
-    <main id="overviewTabView" class="hidden flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-        
-        <!-- Hero Header -->
-        <div class="bg-gradient-to-r from-blue-900/60 via-slate-800 to-slate-900 border border-blue-700/50 rounded-2xl p-6 shadow-xl">
-            <div class="max-w-3xl space-y-2">
-                <div class="inline-flex items-center space-x-2 bg-blue-500/20 text-blue-300 border border-blue-500/40 px-3 py-1 rounded-full text-xs font-semibold">
-                    <i class="fa-solid fa-satellite-dish"></i>
-                    <span>Strategic AI Feature Spec</span>
-                </div>
-                <h2 class="text-2xl font-bold text-white tracking-tight">Goal-Based Audio Listening System</h2>
-                <p class="text-sm text-slate-300 leading-relaxed">
-                    A machine-learning and LLM-assisted listening mode enabling listeners to establish explicit, time-bounded listening goals with strict topic exclusions that immediately override historical collaborative filtering habits.
-                </p>
-            </div>
-
-        </div>
     <!-- Footer -->
-    <footer class="bg-slate-900 border-t border-slate-800 py-3 text-center text-xs text-slate-500">
-        Goal Mode AI Prototype • Strategic AI Feature Spec • <a href="https://github.com/htrussell/music-goal/" target="_blank" rel="noopener noreferrer"> 
-            <u> <span style="color: lightblue; padding: 0 4px;"> Source Code </span> </u>
-        </a>
+    <footer class="app-footer py-3 px-4 text-center text-xs text-slate-500">
+        Goal Mode · Music recommendations shaped around you ·
+        <a class="text-cyan-300 hover:text-cyan-200 underline underline-offset-2" href="https://github.com/htrussell/music-goal/" target="_blank" rel="noopener noreferrer">Source code</a>
 
     </footer>
 
-    <script src="./app.js?v=catalog-first-2" defer></script>
+    <script src="./app.js?v=sample-artist-3" defer></script>
 </body>
 </html>

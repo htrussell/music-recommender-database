@@ -471,6 +471,32 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         duckdb_query.assert_not_called()
         postgres_query.assert_not_called()
 
+    def test_artist_question_uses_artist_catalog_tool_and_supplies_facts(self) -> None:
+        question = 'NEW LISTENER MESSAGE:\n"Is Alice a jazz artist?"'
+        rows = [{"artist_id": 1, "artist_name": "Alice", "artist_country": "US", "catalog_tags": "Jazz"}]
+        with (
+            patch("main.call_sql_worker", return_value={"tool": "search_artists", "arguments": {"query": "Alice"}}) as planner,
+            patch("main.query_duckdb_catalog", return_value=rows) as query,
+            patch("main.call_cloudflare_worker", return_value={"reply": "The catalog lists Alice under Jazz."}) as model,
+        ):
+            response = assistant_json(AssistantRequest(systemInstruction="Answer the question.", userContent=question, task="chat"))
+
+        self.assertEqual(response["catalog"], rows)
+        query.assert_called_once_with("search_artists", {"query": "Alice"})
+        self.assertIn("search_artists", planner.call_args.args[0])
+        self.assertIn('"artist_name": "Alice"', model.call_args.args[1])
+        self.assertIn("independent of listener profiles", model.call_args.args[0])
+
+    def test_chat_without_catalog_evidence_is_told_not_to_guess(self) -> None:
+        with (
+            patch("main.fetch_catalog_for_request", return_value=([], "none")),
+            patch("main.call_cloudflare_worker", return_value={"reply": "I cannot verify that."}) as model,
+        ):
+            assistant_json(AssistantRequest(systemInstruction="Answer the question.", userContent="Does this artist play guitar?", task="chat"))
+
+        self.assertIn("No catalog search results were supplied", model.call_args.args[1])
+        self.assertIn("cannot verify the claim rather than guessing", model.call_args.args[0])
+
     def test_active_queue_context_remains_available_without_catalog_results(self) -> None:
         queue_context = (
             'ACTIVE QUEUE ITEMS (authoritative): '
@@ -525,6 +551,19 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
 
         self.assertEqual(error.exception.status_code, 502)
         self.assertIn("did not return a JSON object", error.exception.detail)
+
+    def test_clean_json_does_not_return_nested_object_from_malformed_response(self) -> None:
+        content = (
+            '{"reply":"Try "a song".", "extracted_taste_insights":[], '
+            '"suggested_recommender_action":{"goal":"Focus","budget":30}}'
+        )
+        with self.assertRaises(HTTPException):
+            clean_json(content)
+
+        with patch("main.httpx.post") as worker:
+            worker.return_value.json.return_value = {"result": content}
+            result = call_cloudflare_worker("Return JSON.", "Say hello.", allow_plain_text=True)
+        self.assertEqual(result["reply"], content)
 
     def test_cloudflare_chat_model_receives_messages(self) -> None:
         with patch("main.httpx.post") as worker:
