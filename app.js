@@ -1139,6 +1139,20 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
             }
         }
 
+        async function fetchSemanticCatalogCandidates(goal, excludeTerms, limit = 40) {
+            const response = await fetch("/api/catalog/semantic-candidates", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ goal, exclude_terms: excludeTerms, limit })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || `Semantic catalog search failed with HTTP ${response.status}.`);
+            if (!Array.isArray(data.candidates)) {
+                throw new Error("The semantic catalog returned an invalid candidate list.");
+            }
+            return data.candidates;
+        }
+
         async function fetchCatalogCandidates(goal, excludeTerms, offset = 0) {
             const response = await fetch("/api/catalog/candidates", {
                 method: "POST",
@@ -1276,6 +1290,12 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                 addRows(page.goal_candidates, "search");
                 addRows(preloadedRows, "fallback");
                 addRows(page.fallback_candidates, "fallback");
+                try {
+                    const semanticRows = await fetchSemanticCatalogCandidates(goalText, excludedTopics, 40);
+                    addRows(semanticRows, "search");
+                } catch (err) {
+                    console.warn("Semantic catalog retrieval unavailable:", err);
+                }
 
                 const systemPrompt = `Rank catalog tracks for the listener's goal. The goal has priority over profile and playlist taste signals.
 Return only tracks that plausibly match the goal, ranked best first. Select only exact IDs from the candidate list.

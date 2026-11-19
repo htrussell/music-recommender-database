@@ -131,9 +131,22 @@ fi
 
 printf '%s\n' "Starting PostgreSQL..."
 docker compose up -d postgres
+docker compose exec -T postgres psql -U airflow -d track-db -c 'ALTER DATABASE "track-db" REFRESH COLLATION VERSION;' >/dev/null 2>&1 || true
 
 printf '%s\n' "Loading Parquet tables into PostgreSQL..."
 # -T disables pseudo-TTY allocation to prevent "the input device is not a TTY" errors in Git Bash (mintty)
 docker compose run --build --rm -T data-loader
+
+printf '%s\n' "Starting Ollama embedding model..."
+docker compose up -d ollama ollama-model
+for _ in $(seq 1 60); do
+    if docker compose exec -T ollama ollama show "${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:v1.5}" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 2
+done
+
+printf '%s\n' "Building catalog embeddings in PostgreSQL pgvector..."
+docker compose run --build --rm -T data-loader python embed_catalog.py
 
 printf '%s\n' "Setup complete. PostgreSQL is available on localhost:5432."

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 import httpx
@@ -8,6 +8,7 @@ import sqlglot
 from main import (
     AssistantRequest,
     CatalogCandidateRequest,
+    SemanticCatalogRequest,
     CHAT_MODEL,
     EMBEDDING_MODEL,
     MODEL,
@@ -21,8 +22,10 @@ from main import (
     extract_youtube_playlist_id,
     fetch_catalog_for_request,
     generate_catalog_query,
+    embed_text,
     load_demo_profile,
     load_youtube_playlist,
+    semantic_catalog_candidates,
     verify_discovered_tracks,
     validate_read_query,
 )
@@ -71,10 +74,56 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
         self.assertEqual(error.exception.detail, "Demo listener 5000 was not found.")
 
     def test_cloudflare_models_are_assigned_to_the_expected_roles(self) -> None:
-        self.assertEqual(MODEL, "llama")
-        self.assertEqual(CHAT_MODEL, "glm")
-        self.assertEqual(SQL_MODEL, "glm")
+        self.assertEqual(MODEL, "gemma")
+        self.assertEqual(CHAT_MODEL, "granite")
+        self.assertEqual(SQL_MODEL, "granite")
         self.assertEqual(EMBEDDING_MODEL, "nomic-embed-text:v1.5")
+
+    def test_ollama_embed_text_requires_a_768_dimension_vector(self) -> None:
+        response = httpx.Response(
+            200,
+            json={"embeddings": [[0.1] * 768]},
+            request=httpx.Request("POST", "http://ollama:11434/api/embed"),
+        )
+        with patch("main.httpx.post", return_value=response):
+            embedding = embed_text("sleep music")
+
+        self.assertEqual(len(embedding), 768)
+
+    def test_semantic_catalog_candidates_hydrate_duckdb_rows(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {"catalog_track_id": "t1", "semantic_similarity": 0.91},
+            {"catalog_track_id": "t2", "semantic_similarity": 0.82},
+        ]
+        postgres = MagicMock()
+        postgres.__enter__.return_value = postgres
+        postgres.cursor.return_value.__enter__.return_value = cursor
+
+        with (
+            patch("main.embed_text", return_value=[0.1] * 768),
+            patch("main.psycopg2.connect", return_value=postgres),
+            patch(
+                "main.query_duckdb_catalog",
+                return_value=[
+                    {"catalog_track_id": "t1", "title": "One"},
+                    {"catalog_track_id": "t2", "title": "Two"},
+                ],
+            ) as duckdb_query,
+        ):
+            response = semantic_catalog_candidates(SemanticCatalogRequest(
+                goal="sleep music",
+                exclude_terms=["metal"],
+                limit=40,
+            ))
+
+        self.assertEqual(response["candidates"][0]["semantic_similarity"], 0.91)
+        self.assertEqual(response["candidates"][1]["semantic_similarity"], 0.82)
+        duckdb_query.assert_called_once()
+        self.assertEqual(
+            duckdb_query.call_args.args,
+            ("search_track_ids", {"track_ids": ["t1", "t2"], "exclude_terms": ["metal"], "limit": 40}),
+        )
 
     def test_allows_catalog_select_and_adds_row_limit(self) -> None:
         query = validate_read_query("SELECT track_id, track_name FROM tracks")
@@ -974,7 +1023,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 assistant_json(request)
 
-        self.assertIn("all tried models: llama, glm", error.exception.detail)
+        self.assertIn("all tried models: gemma, granite", error.exception.detail)
         self.assertEqual(
             [call.kwargs["model"] for call in worker.call_args_list],
             [MODEL, CHAT_MODEL],

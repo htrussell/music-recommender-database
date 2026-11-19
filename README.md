@@ -72,6 +72,39 @@ By running the extraction scripts, you will download data subject to the respect
 - Kaggle API credentials to download source files. Existing CSV files can be
   reused instead; see [Setup options](#setup-options).
 
+### System requirements
+
+The base Docker demo is a lightweight local catalog application. The following
+are practical resource estimates, not formal benchmark guarantees:
+
+| Configuration | CPU | Memory | Free disk |
+|---|---|---|---|
+| Minimum local demo | 2 CPU cores | 4 GB Docker memory | 5 GB |
+| Recommended local demo | 4 CPU cores | 6-8 GB Docker memory | 10 GB |
+| Full pgvector catalog build | 4+ CPU cores | 6-8 GB Docker memory | 15 GB recommended |
+
+The minimum configuration can run the catalog, PostgreSQL, DuckDB, Ollama, and
+the web/API containers. Docker Desktop memory should be allocated to the engine
+before starting the demo.
+
+For full semantic retrieval, the pgvector build adds roughly:
+
+- 274 MB for the local `nomic-embed-text:v1.5` model
+- About 275 MB for 768-dimensional float32 vector values for 89,741 tracks
+- Roughly 300-600 MB for the PostgreSQL HNSW index
+- Additional PostgreSQL pages and temporary build memory
+- Approximately 2,800 Nomic embedding batches when embedding the full catalog
+  with the default batch size
+
+Reserve approximately 1-2 GB of additional disk for pgvector's vectors, indexes,
+database pages, and build overhead. Docker memory of 6-8 GB is recommended
+during the first full embedding build; CPU availability primarily determines build
+duration. The full build is not required to run the base demo.
+
+The local Nomic model performs embedding work, while Cloudflare Workers AI
+provides text generation. The embedding build uses local Ollama CPU resources
+and does not consume Cloudflare model neurons.
+
 The setup and launcher scripts are intended to be run from the repository root.
 They create/use `.venv` for the local data preparation tools and build the
 application containers through Docker Compose.
@@ -101,6 +134,11 @@ the source CSVs into `csv/`, creates eight canonical Parquet files in
 relational tables. The loader drops and recreates the music tables. Setup asks
 for confirmation before this database replacement; do not confirm if you need
 to preserve tables in the local `track-db` database.
+
+Setup also creates the pgvector extension and builds a 768-dimensional
+`nomic-embed-text:v1.5` embedding for each catalog track in PostgreSQL. Set
+`EMBEDDING_MAX_TRACKS` to a positive integer when intentionally testing a bounded
+embedding subset.
 
 ### 3. Start the demo
 
@@ -149,11 +187,11 @@ docker compose exec postgres psql -U airflow -d track-db
 ## How the demo works
 
 The UI is served at <http://localhost:8080>. Catalog-backed recommendations
-use the `llama` model key on the Cloudflare Worker at
+use the `gemma` model key on the Cloudflare Worker at
 `https://music-rec-ai.htrussell.workers.dev`; chat and catalog/SQL planning use
-the `glm` model key. If a model returns no message content or invalid JSON, the
+the `granite` model key. If a model returns no message content or invalid JSON, the
 API retries with the other configured model.
-Queue generation searches the local catalog using goal terms, then asks `llama`
+Queue generation searches the local catalog using goal terms, then asks `gemma`
 to rank eligible catalog tracks. The goal takes precedence over playlist and
 sample-profile taste signals. Up to two additional ranking attempts are made;
 if needed, goal-term search results and then broader catalog tracks fill the

@@ -5,7 +5,9 @@ const corsHeaders = {
 };
 
 const modelMap = {
+  gemma: "@cf/google/gemma-4-26b-a4b-it",
   glm: "@cf/zai-org/glm-4.7-flash",
+  granite: "@cf/ibm-granite/granite-4.0-h-micro",
   llama: "@cf/meta/llama-3.2-1b-instruct",
 };
 

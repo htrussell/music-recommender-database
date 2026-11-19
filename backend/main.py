@@ -17,9 +17,9 @@ from sqlglot import exp
 import yt_dlp
 
 
-MODEL = os.getenv("CLOUDFLARE_RECOMMENDATION_MODEL", "llama")
-CHAT_MODEL = os.getenv("CLOUDFLARE_CHAT_MODEL", "glm")
-SQL_MODEL = os.getenv("CLOUDFLARE_SQL_MODEL", "glm")
+MODEL = os.getenv("CLOUDFLARE_RECOMMENDATION_MODEL", "gemma")
+CHAT_MODEL = os.getenv("CLOUDFLARE_CHAT_MODEL", "granite")
+SQL_MODEL = os.getenv("CLOUDFLARE_SQL_MODEL", "granite")
 EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:v1.5")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
 CLOUDFLARE_WORKER_URL = os.getenv(
@@ -135,6 +135,12 @@ class CatalogCandidateRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=500)
     exclude_terms: list[str] = Field(default_factory=list, max_length=20)
     offset: int = Field(default=0, ge=0, le=1000000)
+
+
+class SemanticCatalogRequest(BaseModel):
+    goal: str = Field(min_length=1, max_length=500)
+    exclude_terms: list[str] = Field(default_factory=list, max_length=20)
+    limit: int = Field(default=40, ge=1, le=100)
 
 
 def extract_youtube_playlist_id(playlist_url: str) -> str:
@@ -957,6 +963,76 @@ CATALOG_SEARCH_STOP_WORDS = {
     "recommendations", "similar", "some", "song", "songs", "the", "track", "tracks", "under",
     "with", "without", "your",
 }
+
+
+def embed_text(text: str) -> list[float]:
+    try:
+        response = httpx.post(
+            f"{OLLAMA_URL.rstrip('/')}/api/embed",
+            json={"model": EMBEDDING_MODEL, "input": text},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=503, detail=f"Ollama embedding service unavailable: {error}") from error
+    embeddings = payload.get("embeddings") if isinstance(payload, dict) else None
+    if isinstance(embeddings, list) and embeddings:
+        embedding = embeddings[0]
+    elif isinstance(payload, dict) and isinstance(payload.get("embedding"), list):
+        embedding = payload["embedding"]
+    else:
+        raise HTTPException(status_code=502, detail="Ollama returned an invalid embedding.")
+    if not isinstance(embedding, list) or len(embedding) != 768:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Ollama embedding had an unexpected dimension: {len(embedding) if isinstance(embedding, list) else 'invalid'}.",
+        )
+    return embedding
+
+
+@app.post("/api/catalog/semantic-candidates")
+def semantic_catalog_candidates(request: SemanticCatalogRequest) -> dict[str, Any]:
+    embedding = embed_text(request.goal)
+    embedding_text = "[" + ",".join(str(float(value)) for value in embedding) + "]"
+    try:
+        with psycopg2.connect(
+            dbname="track-db",
+            user="airflow",
+            password="airflow",
+            host="postgres",
+            port=5432,
+        ) as postgres:
+            with postgres.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT catalog_track_id,
+                           1 - (embedding <=> %s::vector(768)) AS semantic_similarity
+                    FROM catalog_track_embedding
+                    WHERE snapshot_id = 'current'
+                    ORDER BY embedding <=> %s::vector(768)
+                    LIMIT %s
+                    """,
+                    (embedding_text, embedding_text, request.limit),
+                )
+                matches = cursor.fetchall()
+    except psycopg2.Error as error:
+        raise HTTPException(status_code=503, detail=f"Semantic catalog retrieval unavailable: {error}") from error
+    if not matches:
+        return {"candidates": []}
+
+    track_ids = [str(match["catalog_track_id"]) for match in matches]
+    rows = query_duckdb_catalog(
+        "search_track_ids",
+        {"track_ids": track_ids, "exclude_terms": request.exclude_terms, "limit": request.limit},
+    )
+    similarity_by_id = {
+        str(match["catalog_track_id"]): float(match["semantic_similarity"])
+        for match in matches
+    }
+    for row in rows:
+        row["semantic_similarity"] = similarity_by_id.get(str(row["catalog_track_id"]))
+    return {"candidates": rows}
 
 
 @app.post("/api/catalog/candidates")

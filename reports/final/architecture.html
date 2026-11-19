@@ -414,7 +414,7 @@
     <h1>Music Recommender</h1>
     <h2>Executive summary</h2>
     <p>This blueprint describes a music-discovery assistant that turns a listener's natural-language request and optional public playlist into explainable, catalog-grounded recommendations. Primary users are listeners; the product owner is the proposed sponsor. Production streaming integration, playback, advertising, and fully automated preference capture are out of scope.</p>
-    <div class="summary-flow">Browser → FastAPI → DuckDB → canonical Parquet catalog<br>FastAPI → Cloudflare Worker for model planning and generation<br>PostgreSQL → reloadable catalog backup and bounded read-only fallback</div>
+    <div class="summary-flow">Browser → FastAPI → DuckDB → canonical Parquet catalog<br>FastAPI → Cloudflare Worker for model planning and generation<br>PostgreSQL → reloadable catalog backup and bounded read-only fallback<br><span>Proposed:</span> Ollama/Nomic → PostgreSQL pgvector candidate IDs → DuckDB hydration/filtering</div>
     <p><strong>Current design:</strong> the eight-table Zstandard Parquet snapshot is canonical; DuckDB queries those files directly and is the primary AI catalog path. The API validates requests and bounds tool results before selected context is sent to the configured Cloudflare Worker. PostgreSQL is a separately loaded backup/fallback, not the primary catalog. Playlist/profile context is browser-session data. Ollama is configured for embeddings, but no vector index or retrieval is implemented.</p>
     <div class="summary-grid">
       <div class="summary-item"><strong>Bounded access · implemented</strong>Catalog tools return at most 100 rows; track-verification requests accept at most 50 candidates.</div>
@@ -557,6 +557,10 @@
             <circle cx="1062" cy="40" r="12" fill="#fff" stroke="#176d70" stroke-width="3"/><circle cx="1062" cy="40" r="8" fill="none" stroke="#176d70" stroke-width="1"/><text x="1062" y="67" text-anchor="middle" font-size="9" fill="#334">End</text>
           </svg>
         </div>
+        <p class="future"><strong>Proposed pgvector semantic retrieval:</strong> Ollama/Nomic can embed listener goals and precomputed track-description text locally.
+        PostgreSQL with <code>pgvector</code> can store 768-dimensional embeddings by catalog snapshot and return a bounded set of candidate track IDs plus semantic similarity.
+        DuckDB remains authoritative: it verifies each ID against the current Parquet snapshot, hydrates catalog facts, applies exact/genre/artist/audio-feature/exclusion filters, and deduplicates candidates.
+        The AI ranking model receives only the merged candidate pool and never receives direct database access or raw catalog SQL.</p>
         <div class="diagram">
           <p class="diagram-label">Model deployment choices · catalog access always remains behind the API</p>
           <div class="flow">
@@ -1046,7 +1050,7 @@ conversation_data.memory_source(
           <article class="card"><h3>Primary query</h3><p>DuckDB in-memory connection creates views with <code>read_parquet</code>; tool API is parameterized and bounded.</p></article>
           <article class="card"><h3>Backup / fallback</h3><p>PostgreSQL 15 with relational PK/FK constraints; batch load is full refresh, not incremental.</p></article>
           <article class="card"><h3>User context · target</h3><p>Separate PostgreSQL serving schemas for profiles, explicitly saved queues, and opt-in conversation/memory data; never include them in the catalog loader or model SQL allowlist.</p></article>
-          <article class="card"><h3>Models</h3><p>Demo: Cloudflare Worker for generation; Ollama is configured for embeddings only. Local generation or hybrid cloud/local serving is possible but not currently wired.</p></article>
+          <article class="card"><h3>Models</h3><p>Demo: Cloudflare Gemma 4 for recommendation ranking and Granite 4.0 H-Micro for chat/catalog planning; Ollama is configured for embeddings only. Legacy model keys remain as compatibility fallbacks.</p></article>
         </div>
         <p>The DDL and loader are in <a href="../../load_postgres.py">load_postgres.py</a>. The existing PoC contains the eight measured Parquet datasets. The PostgreSQL loader validates column order and streams in batches up to 10,000 rows.</p>
         <h3>PostgreSQL index experiment mapping</h3>
@@ -1237,6 +1241,7 @@ conversation_data.memory_source(
             <tr><td><code>search_albums</code></td><td>Album metadata, genre and selected critic/user scores</td><td>Bounded filters; max 100 rows.</td></tr>
             <tr><td><code>compare_genres</code></td><td>Genre-level count/popularity/audio averages/explicit share</td><td>≤20 genres requested; max 100 rows.</td></tr>
             <tr><td>PostgreSQL fallback</td><td>Eight allowlisted catalog tables and approved columns</td><td>Single SELECT; read-only role; 100 rows; 8-second timeout.</td></tr>
+            <tr><td>PostgreSQL pgvector catalog retrieval (proposed)</td><td>Snapshot ID, catalog track ID, 768-dimensional embedding, text hash, model name, cosine similarity</td><td>Nearest-neighbor candidate retrieval only. IDs must be rehydrated and validated by DuckDB before AI ranking; stale snapshots are excluded.</td></tr>
             <tr><td>Worker prompt</td><td>User prompt, selected profile context, returned catalog rows</td><td>Minimize personal content; no secrets.</td></tr>
             <tr><td>Recent conversation context (proposed)</td><td>Bounded recent messages belonging to the authenticated user</td><td>Off by default; separate opt-in; API owner/expiry filters; send only what is needed; no model DB access.</td></tr>
             <tr><td>Topic-memory retrieval (proposed)</td><td>Small set of relevant, unexpired topic summaries; no raw transcript by default</td><td>Filter by user and expiry before vector search; recalled text is untrusted content, never system instructions.</td></tr>
@@ -1289,10 +1294,12 @@ conversation_data.memory_source(
           <li><strong>Recommendations:</strong> Worker plans DuckDB tool; API fetches candidates; prompt and selected rows go to Worker for generation.</li>
           <li><strong>Album discovery / genre comparison:</strong> bounded DuckDB tool; PostgreSQL fallback as needed.</li>
           <li><strong>Title verification:</strong> DuckDB catalog and optional MusicBrainz Parquet index; exact/fuzzy match.</li>
+          <li><strong>Catalog semantic retrieval (proposed):</strong> Ollama/Nomic embeds the goal and precomputed track text locally; PostgreSQL pgvector returns bounded candidate IDs/similarity; DuckDB hydrates facts and applies exact filters/exclusions before AI ranking.</li>
           <li><strong>Demo-profile personalization (proposed):</strong> resolve a trusted demo identity, fetch only that profile, map artist/genre preferences, join to catalog; no Kafka/Avro needed for the static seed.</li>
           <li><strong>Conversation continuity (proposed):</strong> PostgreSQL stores a short-lived, owner-scoped recent-message window; aged/cold logs are distilled into expiring pgvector topic memories, then the source transcript is purged after successful consolidation. Retrieval combines semantic similarity with recency/confidence/importance and a hard maximum age.</li>
           <li><strong>Model reliability/cost/latency analytics (proposed):</strong> OpenTelemetry operational metrics/traces plus sanitized Avro <code>model-telemetry</code> → HDFS → compacted Parquet → DuckDB; provider token usage is nullable when unavailable.</li>
-          <li><strong>Catalog semantic retrieval and listener behavior analytics:</strong> not implemented; distinct from the proposed pgvector topic-memory retrieval and require separate data/evaluation/governance contracts.</li>
+          <li><strong>Catalog semantic retrieval:</strong> proposed. Nomic generates local 768-dimensional goal and track embeddings; PostgreSQL pgvector returns bounded candidate IDs/similarity; DuckDB hydrates and filters current catalog facts before AI ranking.</li>
+          <li><strong>Listener behavior analytics:</strong> not implemented; distinct from the proposed pgvector catalog retrieval and pgvector topic-memory retrieval, with separate data/evaluation/governance contracts.</li>
         </ul>
         <p>Detailed SQL and exact sample rows are in the <a href="./architecture.md#demonstration-analytics-against-current-parquet-proof-of-concept">Markdown blueprint</a>.</p>
       </section>
@@ -1301,7 +1308,7 @@ conversation_data.memory_source(
         <h2>14. Target state and scalability</h2>
         <p>For current static size, Parquet + DuckDB is intentionally lightweight. As data grows, add immutable versioned directories, build manifests, atomic publication, quality summaries, and AP-labeled DuckDB benchmarks before adding indexes/partitioning. Keep PostgreSQL rebuildable while it remains useful. Reassess managed storage if concurrency, update frequency, or availability requirements change.</p>
         <p>The target listener flow is consent-led: every imported row has a reviewable outcome, recommendations explain their supporting evidence and respect hard exclusions, and chat-inferred preferences remain suggestions until confirmed. The active queue remains transient until the listener explicitly saves it to PostgreSQL; Kafka carries only lifecycle events. Persistent conversation history is off by default and requires separate opt-in. A 24-hour deletion target is not verified; event-projection deletion needs a minimal tombstone/acknowledgment path that is not lost to outbox cascade.</p>
-        <p>Proposed pgvector is only for topic-memory retrieval; it is not a catalog vector index. Durable profiles, Kafka/Avro user events, short-lived conversation storage, expiring topic memories, and model telemetry are specified targets, not current components. Select embedding dimensions and retention/decay thresholds before implementation, and test owner/expiry filters. Interaction analytics require consented event capture; the separate streaming-habits CSV is not a replacement for application events. Cloud serving has provider/network/cost/privacy constraints; local serving can limit external data transfer but requires capacity and operational support.</p>
+        <p>Proposed pgvector has two separate scopes: owner/expiry-scoped topic memories and optional catalog candidate retrieval. Catalog embeddings would use snapshot/model dimensions, track keys, text hashes, cosine similarity, and bounded nearest-neighbor lookup; DuckDB would remain authoritative for hydration, filtering, and exact catalog facts. Durable profiles, Kafka/Avro user events, short-lived conversation storage, expiring topic memories, and model telemetry are specified targets, not current components. Select embedding dimensions and retention/decay thresholds before implementation, and test owner/expiry filters. Interaction analytics require consented event capture; the separate streaming-habits CSV is not a replacement for application events. Cloud serving has provider/network/cost/privacy constraints; local serving can limit external data transfer but requires capacity and operational support.</p>
       </section>
       <section id="s15">
         <h2>15. Roadmap, risks, and accepted tradeoffs</h2>

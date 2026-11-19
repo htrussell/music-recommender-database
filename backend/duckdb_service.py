@@ -70,7 +70,7 @@ demo_profiles_available = False
 
 
 class CatalogToolRequest(BaseModel):
-    tool: Literal["search_tracks", "verify_tracks", "search_albums", "compare_genres"]
+    tool: Literal["search_tracks", "search_track_ids", "verify_tracks", "search_albums", "compare_genres"]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -255,6 +255,65 @@ def run_search_tracks(arguments: dict[str, Any], limit: int) -> list[dict[str, A
         LIMIT ? OFFSET ?
     """
     parameters.extend((limit, offset))
+    if connection is None:
+        raise HTTPException(status_code=503, detail="DuckDB catalog has not finished loading.")
+    return rows_from_cursor(connection.execute(statement, parameters))
+
+
+def run_search_track_ids(arguments: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    track_ids = arguments.get("track_ids")
+    if not isinstance(track_ids, list) or not track_ids:
+        return []
+    if len(track_ids) > 100 or any(
+        not isinstance(track_id, str) or not track_id.strip()
+        for track_id in track_ids
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Argument 'track_ids' must contain at most 100 non-empty strings.",
+        )
+    exclusions = read_exclusions(arguments)
+    conditions = ["tracks.track_id IN (" + ", ".join(["?"] * len(track_ids)) + ")"]
+    parameters: list[Any] = list(track_ids)
+    for term in exclusions:
+        pattern = f"%{term}%"
+        conditions.append(
+            "(COALESCE(tracks.track_name, '') NOT ILIKE ? "
+            "AND COALESCE(genre.genre_name, '') NOT ILIKE ? "
+            "AND NOT EXISTS (SELECT 1 FROM track_artists AS excluded_credits "
+            "JOIN artists AS excluded_artists ON excluded_credits.artist_id = excluded_artists.artist_id "
+            "WHERE excluded_credits.track_id = tracks.track_id AND excluded_artists.artist_name ILIKE ?))"
+        )
+        parameters.extend((pattern, pattern, pattern))
+    statement = """
+        SELECT
+            tracks.track_id AS catalog_track_id,
+            tracks.track_name AS title,
+            string_agg(DISTINCT artists.artist_name, ', ' ORDER BY artists.artist_name) AS artist,
+            tracks.duration_ms,
+            genre.genre_name AS genre,
+            track_feel.energy,
+            track_feel.valence,
+            track_feel.danceability,
+            track_feel.acousticness,
+            track_feel.instrumentalness,
+            track_feel.tempo,
+            tracks.popularity,
+            tracks.explicit
+        FROM tracks
+        LEFT JOIN track_artists ON tracks.track_id = track_artists.track_id
+        LEFT JOIN artists ON track_artists.artist_id = artists.artist_id
+        LEFT JOIN genre ON tracks.genre_id = genre.genre_id
+        LEFT JOIN track_feel ON tracks.track_id = track_feel.track_id
+        WHERE {where_clause}
+        GROUP BY tracks.track_id, tracks.track_name, tracks.duration_ms, genre.genre_name,
+            track_feel.energy, track_feel.valence, track_feel.danceability,
+            track_feel.acousticness, track_feel.instrumentalness, track_feel.tempo,
+            tracks.popularity, tracks.explicit
+        ORDER BY tracks.popularity DESC NULLS LAST, tracks.track_id
+        LIMIT ?
+    """.replace("{where_clause}", " AND ".join(conditions))
+    parameters.append(limit)
     if connection is None:
         raise HTTPException(status_code=503, detail="DuckDB catalog has not finished loading.")
     return rows_from_cursor(connection.execute(statement, parameters))
@@ -637,6 +696,11 @@ def query_catalog(request: CatalogToolRequest) -> dict[str, Any]:
             "limit",
             "offset",
         },
+        "search_track_ids": {
+            "track_ids",
+            "exclude_terms",
+            "limit",
+        },
         "verify_tracks": {"tracks"},
         "search_albums": {
             "query",
@@ -657,6 +721,8 @@ def query_catalog(request: CatalogToolRequest) -> dict[str, Any]:
     with connection_lock:
         if request.tool == "search_tracks":
             rows = run_search_tracks(arguments, limit)
+        elif request.tool == "search_track_ids":
+            rows = run_search_track_ids(arguments, limit)
         elif request.tool == "verify_tracks":
             rows = run_verify_tracks(arguments)
         elif request.tool == "search_albums":

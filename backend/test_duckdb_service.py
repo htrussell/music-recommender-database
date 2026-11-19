@@ -89,6 +89,17 @@ class DuckDBCatalogToolTests(unittest.TestCase):
 
         self.assertEqual(response["rows"], [])
 
+    def test_track_search_by_semantic_ids_hydrates_only_selected_tracks(self) -> None:
+        response = duckdb_service.query_catalog(
+            duckdb_service.CatalogToolRequest(
+                tool="search_track_ids",
+                arguments={"track_ids": ["t2"], "exclude_terms": [], "limit": 40},
+            )
+        )
+
+        self.assertEqual([row["catalog_track_id"] for row in response["rows"]], ["t2"])
+        self.assertEqual(response["rows"][0]["artist"], "Bob")
+
     def test_track_search_supports_stable_pagination(self) -> None:
         response = duckdb_service.query_catalog(
             duckdb_service.CatalogToolRequest(

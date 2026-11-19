@@ -11,6 +11,10 @@ function loadApp() {
         window: {},
         console,
         URL,
+        fetch: async () => ({
+            ok: true,
+            json: async () => ({ candidates: [] })
+        }),
         sessionStorage: {
             getItem: key => storage.get(key) ?? null,
             setItem: (key, value) => storage.set(key, value),

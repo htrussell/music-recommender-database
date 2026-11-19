@@ -34,7 +34,13 @@ a requested operation is unsupported. Playlist and taste-profile context is held
 in the browser session, not persisted in the music database. Ollama and
 `nomic-embed-text:v1.5` are configured for local embeddings, but no embedding
 generation, vector index, or vector retrieval pipeline is implemented in the
-current catalog path. Architecturally, the API/catalog could instead run on a
+current catalog path. A proposed future retrieval path can embed listener goals
+and catalog text with Nomic, store 768-dimensional track embeddings in PostgreSQL
+with `pgvector`, and return only candidate track IDs. DuckDB would then remain
+authoritative for catalog facts: it would hydrate and filter candidate IDs by
+artist, genre, duration, audio features, explicitness, and exclusions. The AI
+model would rank the merged candidates but would not receive a direct database
+connection or generate catalog SQL. Architecturally, the API/catalog could instead run on a
 local server and call a local generation model (for example, Ollama), use cloud
 models, or use a hybrid. A fully local model-serving mode is a deployment option,
 not a current feature: Ollama is currently configured only for embeddings.
@@ -199,6 +205,15 @@ Listener              Browser / AI API                 DuckDB catalog          C
    server; this would require configuring a local generation model and validating
    its structured-output/tool-planning capabilities.
 
+   **Proposed pgvector semantic retrieval:** Ollama/Nomic can embed a listener goal
+   and precomputed track-description text locally. PostgreSQL with `pgvector` can
+   store 768-dimensional track embeddings by catalog snapshot and return only
+   bounded candidate track IDs plus semantic similarity. DuckDB remains authoritative:
+   it verifies that each ID exists in the current snapshot, hydrates catalog facts,
+   applies exact text/genre/artist/audio-feature/exclusion filters, and deduplicates
+   candidates. The AI model receives the merged candidates for final smart ranking,
+   but does not connect to PostgreSQL or issue SQL directly.
+
 ### Process B — Playlist-grounded discovery
 
 ```text
@@ -284,7 +299,7 @@ Target listener flow (proposed, not implemented):
 | Kafka + Avro (target) | Versioned profile/activity events for asynchronous consumers and archival. | Kafka broker exists in optional Compose topology; user event topics/producers/consumers/registry are not configured. |
 | Event consumer/archive (target) | Idempotent consumption, derived profile/analytics updates, Avro event files in HDFS, compacted Parquet for DuckDB. | Proposed only; no current consumer or archive writer. |
 | Conversation/memory store (target) | Separate PostgreSQL `conversation_data` schema for short-lived messages and compact topic memories; pgvector for memory embeddings. | Proposed only; no durable transcripts, embedding generation, vector search, expiry, or deletion workflow. |
-| Cloudflare Worker / Workers AI | Chat, recommendation, and catalog-tool/SQL planning. | External model execution; prompts and selected rows are sent there. |
+| Cloudflare Worker / Workers AI | Chat, recommendation, and catalog-tool/SQL planning. | External model execution; prompts and selected rows are sent there. Gemma 4 serves recommendations, Granite 4.0 H-Micro serves chat and planning, and legacy model keys remain available only for compatibility. |
 | Ollama | Serves the configured local `nomic-embed-text:v1.5` embedding model. | Model is pulled/configured for embeddings; it is not currently the generation provider, and there is no vector ingestion/retrieval flow. |
 | Local model runtime (deployment option) | Could host recommendation/chat/planning models beside the API and catalog. | Not currently wired for generation. Requires sufficient CPU/GPU memory and throughput, model lifecycle/updates, monitoring, and model capability checks; local deployment reduces third-party prompt transfer but does not itself provide authentication, privacy controls, or availability. |
 | Optional MusicBrainz export | A user-supplied MusicBrainz PostgreSQL database can be exported to a compact Parquet matching index. | Optional; not downloaded/imported by this repository. |
@@ -1471,10 +1486,11 @@ is disabled unless the listener has separately opted in.
 
 | Surface | Exposed data / fields | Access rules |
 |---|---|---|
-| DuckDB `search_tracks` | Track ID/title/duration/popularity/explicit, artist names, genre, selected audio features | Parameterized filters; max 100 results; query text, genre, artist, exclusions, duration, energy, explicit filter. |
+| DuckDB `search_tracks` | Track ID/title/duration/popularity/explicit, artist names, genre, selected audio features | Parameterized filters; max 100 results; query text, genre, artist, exclusions, duration, energy, explicit filter. Also hydrates and validates IDs proposed by semantic retrieval. |
 | DuckDB `verify_tracks` | Candidate title/artist compared to local catalog; optional MusicBrainz recording ID/title/artist/duration | Max 50 candidates; may return multiple matches per candidate; API selects a catalog identity and source label; fuzzy results can be imperfect. |
 | DuckDB `search_albums` | Album ID/title/format/date/label, genre, selected review scores | Bounded inputs and max 100 results. |
 | DuckDB `compare_genres` | Genre ID/name, track count, average popularity/energy/danceability/tempo, explicit percentage | At most 20 requested genres; max 100 results. |
+| Proposed `pgvector` catalog retrieval | Snapshot ID, catalog track ID, 768-dimensional embedding, text hash, model name, cosine similarity | Bounded nearest-neighbor lookup only. IDs must be rehydrated and validated by DuckDB before model ranking; stale snapshots and unmatched IDs are excluded. |
 | PostgreSQL fallback | Tables `album`, `album_scores`, `artist_genres`, `artists`, `genre`, `track_artists`, `track_feel`, `tracks`; columns allowlisted in `backend/main.py` | Single `SELECT`; no schema-qualified objects or writes; 100-row cap; 8-second statement timeout; read-only `music_reader` role. |
 | Model prompt context | User prompt, approved taste/profile detail, selected catalog rows | Sent to configured Cloudflare Worker. Do not include secrets or unnecessary personal data. |
 | Demo profile lookup | Selected static fixture profile plus artist/genre mapping status and at most 40 matched catalog tracks | Explicit API route, outside the model-generated SQL allowlist. Browser-selected IDs are not authenticated principals. Only top artist, genre, and mood are sent to the model; remaining fixture attributes stay local. |
@@ -1664,7 +1680,7 @@ not these analytics.
 | Album discovery | Album metadata, genre, review scores | `search_albums` DuckDB tool; PostgreSQL fallback if required | Implemented. |
 | Genre comparison | Aggregate catalog metrics | `compare_genres` DuckDB tool | Implemented. |
 | Direct-prompt title verification | Candidate titles/artist names against catalog; optional MusicBrainz index | API calls DuckDB verification; client uses resolved catalog identity | Implemented; matching can be approximate. |
-| Catalog semantic/vector retrieval | No data currently | None | Future only; embedding model configured but no catalog index, chunks, or retrieval contract. pgvector topic-memory retrieval is a separate proposed user-context function. |
+| Catalog semantic/vector retrieval | Listener goal and track-description embeddings; candidate track ID, snapshot ID, and cosine similarity | Proposed Ollama/Nomic embedding service and PostgreSQL `pgvector`; DuckDB hydrates and validates candidate facts | Proposed future only. Separate from current topic-memory design; pgvector provides candidate recall, while DuckDB remains the catalog system of record. |
 | Conversation continuity (target) | Recent owner-scoped messages plus relevant, unexpired topic summaries | API loads a bounded recent window and uses pgvector for topic-memory search; sends only selected context to model | Proposed only; short transcript TTL, topic consolidation at falloff, hard expiry/deletion for both layers. |
 | Listener analytics/personalization learning | No persisted interaction data | None | Out of scope until event capture/consent and governance exist. |
 | Model reliability/cost/latency analytics (target) | Sanitized invocation events; provider usage only when reported | OpenTelemetry operational metrics/traces; Kafka `model-telemetry` → HDFS Avro → compacted Parquet/DuckDB | Proposed only; no structured invocation telemetry, collector, topic, archive, or dashboard today. |
@@ -1680,14 +1696,15 @@ PostgreSQL a rebuildable backup while it remains useful. If multiple writers,
 concurrent sessions, or strict freshness/availability emerge, reassess a managed
 relational/catalog store and explicit replica/snapshot consistency.
 
-The proposed `pgvector` use is limited to topic-memory retrieval, not catalog
-semantic recommendations. Select its embedding model/version/dimensions and
-benchmark exact search before adding HNSW/IVFFlat; always scope by owner and
-expiry. If semantic catalog recommendations become a requirement, separately
-design chunk granularity, model/version/dimensions, distance metric/index,
-metadata filters, source keys, refresh/delete propagation, evaluation set, and
-model provider/privacy boundaries before describing that architecture as
-implemented.
+The proposed `pgvector` use has two distinct scopes. Topic-memory retrieval
+must remain owner-scoped and expiry-aware. Catalog semantic retrieval is proposed
+as candidate recall only: store a snapshot ID, catalog track ID, model/version,
+768-dimensional embedding, text hash, and cosine-similarity metadata. Benchmark
+exact search before adding HNSW/IVFFlat. DuckDB must still hydrate and validate
+candidate IDs, apply hard catalog/exclusion filters, and return the authoritative
+facts. Design track text/chunk granularity, distance metric/index, metadata
+filters, source keys, refresh/delete propagation, evaluation set, and
+privacy/latency boundaries before implementation.
 If interaction analytics become a goal, add a consented event contract first, then
 build incremental fact loads and a warehouse from those events; the current
 streaming-habits CSV is not a substitute for app events.
