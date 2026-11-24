@@ -4,13 +4,18 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadApp() {
+function loadApp(storage = new Map()) {
     const elements = new Map();
-    const storage = new Map();
     const context = vm.createContext({
-        window: {},
+        window: {
+            YT: { Player: function(id, options) { this.events = options.events; this.destroy = () => {}; this.playVideo = () => {}; } },
+            location: { origin: "http://localhost:8000" },
+            innerWidth: 1200,
+            innerHeight: 900
+        },
         console,
         URL,
+        confirm: () => true,
         fetch: async () => ({
             ok: true,
             json: async () => ({ candidates: [] })
@@ -21,8 +26,26 @@ function loadApp() {
             removeItem: key => storage.delete(key)
         },
         document: {
+            visibilityState: "visible",
+            hasFocus: () => true,
             getElementById(id) {
-                if (!elements.has(id)) elements.set(id, { value: "", checked: true, scrollIntoView() {}, classList: { add() {}, remove() {} } });
+                if (!elements.has(id)) {
+                    const classes = new Set();
+                    elements.set(id, {
+                        value: "", checked: true, scrollIntoView() {}, focus() {}, setAttribute() {},
+                        getBoundingClientRect: () => ({ left: 0, top: 0, right: 400, bottom: 225, width: 400, height: 225 }),
+                        classList: {
+                            add: (...names) => names.forEach(name => classes.add(name)),
+                            remove: (...names) => names.forEach(name => classes.delete(name)),
+                            toggle: (name, force) => {
+                                const add = force === undefined ? !classes.has(name) : force;
+                                if (add) classes.add(name); else classes.delete(name);
+                                return add;
+                            },
+                            contains: name => classes.has(name)
+                        }
+                    });
+                }
                 return elements.get(id);
             }
         }
@@ -90,6 +113,323 @@ test("YouTube preview reports missing configuration and keeps the search link", 
     })()`, app);
     assert.match(result.status, /require an API key/);
     assert.match(result.link, /Artist%20Song%20%26%20More/);
+});
+
+test("uncertain YouTube matches wait for tab focus and show duration-aware choices", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        let body;
+        let focused = false;
+        document.hasFocus = () => focused;
+        YOUTUBE_PREVIEW_QUEUE = [{ id: "a", title: "Song", artist: "Artist", durationMs: 120000 }];
+        fetch = async (url, options) => {
+            body = JSON.parse(options.body);
+            return { ok: true, json: async () => ({
+                candidates: [
+                    { video_id: "abcdefghijk", title: "Song", channel: "Artist", duration_seconds: 120, duration_match: true },
+                    { video_id: "zyxwvutsrqp", title: "Interview", channel: "Artist", duration_seconds: 900, duration_match: false }
+                ],
+                suggested_video_id: null,
+                warning: "No high-confidence match. Choose a result."
+            }) };
+        };
+        await openYouTubePreview(0);
+        const hiddenBefore = document.getElementById("youtubePreviewOptions").classList.contains("hidden");
+        const playerBefore = document.getElementById("youtubePreviewPlayer").innerHTML;
+        const pending = YOUTUBE_CHOICE_PENDING;
+        focused = true;
+        document.visibilityState = "hidden";
+        revealPendingYouTubeChoices();
+        const hiddenWhileInvisible = document.getElementById("youtubePreviewOptions").classList.contains("hidden");
+        document.visibilityState = "visible";
+        revealPendingYouTubeChoices();
+        const displayed = !document.getElementById("youtubePreviewOptions").classList.contains("hidden");
+        const choices = document.getElementById("youtubePreviewCandidates").innerHTML;
+        const status = document.getElementById("youtubePreviewStatus").textContent;
+        selectYouTubePreview(1);
+        return { body, hiddenBefore, playerBefore, pending, hiddenWhileInvisible, displayed, choices, status,
+            chosen: document.getElementById("youtubePreviewPlayer").innerHTML,
+            pressed: document.getElementById("youtubePreviewOptions").open };
+    })()`, app);
+    assert.equal(result.body.duration_seconds, 120);
+    assert.equal(result.hiddenBefore, true);
+    assert.equal(result.playerBefore, "");
+    assert.equal(result.pending, true);
+    assert.equal(result.hiddenWhileInvisible, true);
+    assert.equal(result.displayed, true);
+    assert.match(result.choices, /2:00/);
+    assert.match(result.choices, /15:00/);
+    assert.match(result.choices, /Length differs/);
+    assert.match(result.status, /No high-confidence/);
+    assert.match(result.chosen, /zyxwvutsrqp/);
+    assert.equal(result.pressed, false);
+});
+
+test("high-confidence YouTube matches load automatically without asking for a choice", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        YOUTUBE_PREVIEW_QUEUE = [{ title: "Song", artist: "Artist", durationSeconds: 120 }];
+        fetch = async () => ({ ok: true, json: async () => ({
+            candidates: [{ video_id: "abcdefghijk", title: "Song", channel: "Artist", duration_seconds: 120, duration_match: true }],
+            suggested_video_id: "abcdefghijk"
+        }) });
+        await openYouTubePreview(0, true);
+        return { player: document.getElementById("youtubePreviewPlayer").innerHTML, pending: YOUTUBE_CHOICE_PENDING,
+            expanded: document.getElementById("youtubePreviewOptions").open,
+            title: document.getElementById("youtubePreviewOptionsTitle").textContent };
+    })()`, app);
+    assert.match(result.player, /abcdefghijk/);
+    assert.equal(result.pending, false);
+    assert.equal(result.expanded, false);
+    assert.equal(result.title, "Other versions");
+});
+
+test("unknown catalog duration is not sent as the fallback four-minute duration", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        let body;
+        YOUTUBE_PREVIEW_QUEUE = [{ title: "Song", artist: "Artist", durationMs: null, durationSeconds: 240, catalogMetadata: {} }];
+        fetch = async (url, options) => { body = JSON.parse(options.body); return { ok: true, json: async () => ({ candidates: [] }) }; };
+        await openYouTubePreview(0);
+        return body.duration_seconds;
+    })()`, app);
+    assert.equal(result, null);
+});
+
+test("pending choices are discarded if the preview is closed before focus returns", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        document.hasFocus = () => false;
+        YOUTUBE_PREVIEW_QUEUE = [{ title: "Song", artist: "Artist" }];
+        fetch = async () => ({ ok: true, json: async () => ({
+            candidates: [{ video_id: "abcdefghijk", title: "Song", channel: "Artist", duration_seconds: null }],
+            suggested_video_id: null
+        }) });
+        await openYouTubePreview(0);
+        closeYouTubePreview();
+        document.hasFocus = () => true;
+        revealPendingYouTubeChoices();
+        return { pending: YOUTUBE_CHOICE_PENDING, hidden: document.getElementById("youtubePreviewOptions").classList.contains("hidden") };
+    })()`, app);
+    assert.equal(result.pending, false);
+    assert.equal(result.hidden, true);
+});
+
+test("onboarding reviews and saves a playlist, then restores it after refresh", async () => {
+    const storage = new Map();
+    const app = loadApp(storage);
+    const result = await vm.runInContext(`(async () => {
+        showToast = () => {};
+        fetch = async () => ({ ok: true, json: async () => ({
+            playlistName: "My list", source: "youtube", tracks: [
+                { id: "a", title: "First", artist: "Artist", tags: [], durationSeconds: 100 },
+                { id: "b", title: "Second", artist: "Artist", tags: [], durationSeconds: 100 }
+            ]
+        }) });
+        document.getElementById("welcomePlaylistInput").value = "playlist-id";
+        await importWelcomePlaylist();
+        const before = sessionStorage.getItem("goalModeWelcomeComplete");
+        removePlaylistPreviewTrack(0);
+        completeWelcomePlaylist();
+        return { before, saved: JSON.parse(sessionStorage.getItem("goalModeListenerProfile")), complete: sessionStorage.getItem("goalModeWelcomeComplete") };
+    })()`, app);
+    assert.equal(result.before, null);
+    assert.equal(result.complete, "1");
+    assert.equal(result.saved.playlist.tracks.length, 1);
+    assert.equal(result.saved.playlist.tracks[0].title, "Second");
+    assert.doesNotMatch(result.saved.tasteSummary, /First/);
+    assert.match(result.saved.tasteSummary, /Second/);
+    const refreshed = loadApp(storage);
+    const restored = await vm.runInContext(`(async () => {
+        showToast = () => {};
+        await loadSavedListenerProfile();
+        return { title: NORMALIZED_PLAYLIST.tracks[0].title, complete: sessionStorage.getItem("goalModeWelcomeComplete") };
+    })()`, refreshed);
+    assert.equal(restored.title, "Second");
+    assert.equal(restored.complete, "1");
+});
+
+test("onboarding saves a synthetic listener, reports failures, and reset preserves history and chat", async () => {
+    const storage = new Map();
+    const app = loadApp(storage);
+    const result = await vm.runInContext(`(async () => {
+        showToast = () => {};
+        document.getElementById("welcomeProfileInput").value = "8";
+        fetch = async () => ({ ok: false, json: async () => ({ detail: "No listener" }) });
+        await loadWelcomeProfile();
+        const failure = document.getElementById("welcomeStatus").textContent;
+        const incomplete = sessionStorage.getItem("goalModeWelcomeComplete");
+        fetch = async () => ({ ok: true, json: async () => ({
+            profile: { listener_id: 8, top_artist: "Artist", top_genre: "Rock", top_mood: "Calm" },
+            tracks: [], artist_mapping_status: "unmatched", genre_mapping_status: "unmatched"
+        }) });
+        await loadWelcomeProfile();
+        const saved = JSON.parse(sessionStorage.getItem("goalModeListenerProfile")).demoProfileId;
+        sessionStorage.setItem("goalModePreviouslyRecommended", '["db:old"]');
+        CHAT_HISTORY = [{ role: "user", content: "hello" }];
+        LAST_RECOMMENDATION_DATA = { recommendations: [{ id: "db:old" }] };
+        resetPersonalization();
+        return { failure, incomplete, saved, profile: DEMO_PROFILE, stored: sessionStorage.getItem("goalModeListenerProfile"),
+            complete: sessionStorage.getItem("goalModeWelcomeComplete"), history: sessionStorage.getItem("goalModePreviouslyRecommended"), chat: CHAT_HISTORY.length, queue: LAST_RECOMMENDATION_DATA };
+    })()`, app);
+    assert.match(result.failure, /No listener/);
+    assert.equal(result.incomplete, null);
+    assert.equal(result.saved, 8);
+    assert.equal(result.profile, null);
+    assert.equal(result.stored, null);
+    assert.equal(result.complete, null);
+    assert.equal(result.history, '["db:old"]');
+    assert.equal(result.chat, 1);
+    assert.equal(result.queue, null);
+});
+
+test("failed or abandoned playlist imports cannot complete onboarding", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        showToast = () => {};
+        document.getElementById("welcomePlaylistInput").value = "list";
+        fetch = async () => ({ ok: false, json: async () => ({ detail: "Import failed" }) });
+        await importWelcomePlaylist();
+        const failure = document.getElementById("welcomeStatus").textContent;
+        const incomplete = sessionStorage.getItem("goalModeWelcomeComplete");
+        let finish;
+        fetch = () => new Promise(resolve => { finish = resolve; });
+        const pending = importWelcomePlaylist();
+        completeWelcome();
+        finish({ ok: true, json: async () => ({ playlistName: "Late", tracks: [{ id: "a", title: "Song", artist: "Artist", tags: [] }] }) });
+        await pending;
+        return { failure, incomplete, playlist: PENDING_PLAYLIST, completed: sessionStorage.getItem("goalModeWelcomeComplete") };
+    })()`, app);
+    assert.match(result.failure, /Import failed/);
+    assert.equal(result.incomplete, null);
+    assert.equal(result.playlist, null);
+    assert.equal(result.completed, "1");
+});
+
+test("a saved synthetic listener is restored for the same browser session", async () => {
+    const storage = new Map([
+        ["goalModeWelcomeComplete", "1"],
+        ["goalModeListenerProfile", JSON.stringify({ demoProfileId: 7 })]
+    ]);
+    const app = loadApp(storage);
+    const result = await vm.runInContext(`(async () => {
+        showToast = () => {};
+        fetch = async () => ({ ok: true, json: async () => ({
+            profile: { listener_id: 7, top_artist: "Artist", top_genre: "Rock", top_mood: "Calm" },
+            tracks: [], artist_mapping_status: "unmatched", genre_mapping_status: "unmatched"
+        }) });
+        await loadSavedListenerProfile();
+        return { id: DEMO_PROFILE.profile.listener_id, status: document.getElementById("profileSaveStatus").textContent };
+    })()`, app);
+    assert.equal(result.id, 7);
+    assert.match(result.status, /Restored/);
+});
+
+test("player completion and skip advance without accepting stale events", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        const players = [];
+        window.YT.Player = function(id, options) {
+            this.events = options.events;
+            this.playVideo = () => { this.played = true; };
+            this.destroy = () => { this.destroyed = true; };
+            players.push(this);
+        };
+        YOUTUBE_PREVIEW_QUEUE = [{ id: "a", title: "First", artist: "A" }, { id: "b", title: "Second", artist: "B" }, { id: "c", title: "Third", artist: "C" }];
+        fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ video_id: "abcdefghijk", title: "Song", channel: "Artist" }], suggested_video_id: "abcdefghijk" }) });
+        await openYouTubePreview(0);
+        await Promise.resolve();
+        players[0].events.onStateChange({ data: 0 });
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        players[0].events.onStateChange({ data: 0 });
+        players[1].events.onReady({ target: players[1] });
+        const autoplay = players[1].played;
+        skipCurrentYouTubeTrack();
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        players[2].events.onAutoplayBlocked();
+        const blocked = document.getElementById("youtubePreviewStatus").textContent;
+        players[2].events.onStateChange({ data: 0 });
+        return { states: Array.from(YOUTUBE_QUEUE_STATES.entries()), autoplay, blocked,
+            status: document.getElementById("youtubePreviewStatus").textContent, active: YOUTUBE_ACTIVE_TRACK_ID };
+    })()`, app);
+    assert.deepEqual(JSON.parse(JSON.stringify(result.states)), [["a", "finished"], ["b", "skipped"], ["c", "finished"]]);
+    assert.equal(result.autoplay, true);
+    assert.match(result.blocked, /Autoplay was blocked/);
+    assert.match(result.status, /end of the queue/);
+    assert.equal(result.active, null);
+});
+
+test("partial queue updates retain progress and advance when another track arrives", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        showToast = () => {};
+        CATALOG_ITEMS = [
+            { id: "db:1", title: "First", artist: "A", duration: 4, tags: [] },
+            { id: "db:2", title: "Second", artist: "B", duration: 4, tags: [] }
+        ];
+        fetch = async () => ({ ok: true, json: async () => ({ candidates: [], suggested_video_id: null }) });
+        renderResults({ recommendations: [{ content_id: "db:1" }] }, 8, true);
+        await openYouTubePreview(0);
+        skipCurrentYouTubeTrack();
+        const waiting = document.getElementById("youtubePreviewStatus").textContent;
+        renderResults({ recommendations: [{ content_id: "db:1" }, { content_id: "db:2" }] }, 8, true);
+        await Promise.resolve(); await Promise.resolve();
+        return { waiting, state: YOUTUBE_QUEUE_STATES.get("db:1"), active: YOUTUBE_ACTIVE_TRACK_ID, label: document.getElementById("queue-state-0").textContent,
+            noMatch: document.getElementById("youtubePreviewStatus").textContent };
+    })()`, app);
+    assert.match(result.waiting, /Waiting/);
+    assert.equal(result.state, "skipped");
+    assert.equal(result.active, "db:2");
+    assert.equal(result.label, "Skipped");
+    assert.match(result.noMatch, /No embeddable/);
+});
+
+test("an off-screen next player and an unplayable video remain actionable without marking it finished", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        const players = [];
+        window.YT.Player = function(id, options) {
+            this.events = options.events;
+            this.playVideo = () => { this.played = true; };
+            this.destroy = () => {};
+            players.push(this);
+        };
+        YOUTUBE_PREVIEW_QUEUE = [{ id: "a", title: "First", artist: "A" }, { id: "b", title: "Second", artist: "B" }];
+        fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ video_id: "abcdefghijk", title: "Song", channel: "Artist" }], suggested_video_id: "abcdefghijk" }) });
+        await openYouTubePreview(0);
+        await Promise.resolve();
+        skipCurrentYouTubeTrack();
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        document.getElementById("youtubePreviewPlayer").getBoundingClientRect = () => ({ left: 0, top: 1000, right: 400, bottom: 1225, width: 400, height: 225 });
+        players[1].events.onReady({ target: players[1] });
+        const offscreen = document.getElementById("youtubePreviewStatus").textContent;
+        players[1].events.onError();
+        return { offscreen, played: !!players[1].played, error: document.getElementById("youtubePreviewStatus").textContent, state: YOUTUBE_QUEUE_STATES.get("b") };
+    })()`, app);
+    assert.match(result.offscreen, /Press play/);
+    assert.equal(result.played, false);
+    assert.match(result.error, /Choose another result or skip/);
+    assert.equal(result.state, undefined);
+});
+
+test("player API loading failures are surfaced and do not mark the track finished", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        delete window.YT;
+        window.setTimeout = () => 1;
+        window.clearTimeout = () => {};
+        let script;
+        document.createElement = () => ({ remove() {} });
+        document.head = { appendChild(element) { script = element; } };
+        YOUTUBE_PREVIEW_QUEUE = [{ id: "a", title: "Song", artist: "Artist" }];
+        fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ video_id: "abcdefghijk", title: "Song", channel: "Artist" }], suggested_video_id: "abcdefghijk" }) });
+        await openYouTubePreview(0);
+        script.onerror();
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        return { status: document.getElementById("youtubePreviewStatus").textContent, state: YOUTUBE_QUEUE_STATES.get("a") };
+    })()`, app);
+    assert.match(result.status, /Automatic queue advancement is unavailable/);
+    assert.equal(result.state, undefined);
 });
 
 test("chat unwraps a JSON response without losing its suggestions", () => {
@@ -245,6 +585,32 @@ test("the rendered queue keeps only one exact title across artists", () => {
     assert.match(result.queue, /openYouTubePreview\(0\)/);
     assert.doesNotMatch(result.queue, /Rufus Wainwright/);
     assert.equal(result.duration, "12:00 / 20:00");
+});
+
+test("queue cards label broader fallback and expose an accessible YouTube play action", () => {
+    const app = loadApp();
+    const queue = vm.runInContext(`(() => {
+        CATALOG_ITEMS = [{ id: "db:1", title: 'A "Song"', artist: "Artist", duration: 4, tags: [] }];
+        renderResults({ recommendations: [{ content_id: "db:1", source: "broad_fill", reason: "Broader catalog fallback" }] }, 10, true);
+        return document.getElementById("queueList").innerHTML;
+    })()`, app);
+    assert.match(queue, /Broader fill/);
+    assert.match(queue, /aria-label="Play A &quot;Song&quot; on YouTube"/);
+    assert.match(queue, /Broader catalog fallback/);
+});
+
+test("pending chat preferences remain visible when session details are collapsed", () => {
+    const app = loadApp();
+    const result = vm.runInContext(`(() => {
+        PENDING_TASTE_INSIGHTS = ["Likes jazz"];
+        renderPendingTasteInsights();
+        const pending = document.getElementById("chatPendingBadge").textContent;
+        PENDING_TASTE_INSIGHTS = [];
+        renderPendingTasteInsights();
+        return { pending, cleared: document.getElementById("chatPendingBadge").textContent };
+    })()`, app);
+    assert.equal(result.pending, "1 to review");
+    assert.equal(result.cleared, "");
 });
 
 test("an exact title in the imported playlist excludes all matching artists", () => {

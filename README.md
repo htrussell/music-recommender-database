@@ -167,12 +167,24 @@ environment. Docker Compose passes the key to the backend; an environment
 variable takes precedence over `.env`. Restart the demo after changing it.
 The `.env` file is Git-ignored, but contains a secret: do not share or commit it.
 
-Select **Play on YouTube** on a queue item to search on demand. The song and
-artist are sent to YouTube, and search results are sent to the configured
-Cloudflare Worker for a suggested match. Choose another result if the match is
-incorrect; playback is controlled by YouTube's embedded player. Videos may be
-unavailable or restricted, and YouTube API quota applies. No key is sent to
-the browser or the matching model.
+Select the play button on a queue item to search YouTube on demand. The song and
+artist are sent to YouTube. The app retrieves video lengths and compares them
+with the catalog track length, allowing a difference of 30 seconds or 25% of
+the track length, whichever is greater. Duration-compatible results are sent
+to the configured Cloudflare Worker for a match. Only a high-confidence match
+is selected automatically; otherwise, choices with their lengths appear when
+the tab is focused. All search results remain available for manual selection,
+including videos with a different or unavailable length. If the track or video
+length cannot be checked, select a result manually. The extra video-details
+request uses YouTube API quota. Choose another result if the match is
+incorrect; playback is controlled by YouTube's visible embedded player. When a
+video ends, the track is marked finished and the queue moves to the next track;
+**Skip track** marks it skipped and advances. Progress is kept while the queue
+is open and resets when a new queue is built. Browser autoplay restrictions or
+an off-screen player can require pressing play for the next track. If a video
+is unavailable or no match is found, choose another result, search on YouTube,
+or skip; it is not marked finished automatically. YouTube API quota applies.
+No key is sent to the browser or the matching model.
 
 Automation examples:
 
@@ -246,6 +258,15 @@ if needed, goal-term search results and then broader catalog tracks fill the
 queue. Broader fallback tracks may not match the goal and are labeled in the
 queue. Goal-term matches in genre and artist metadata are prioritized over
 incidental words in titles. Ranking failures are reported alongside any catalog fallback.
+On first opening a browser session, import and review a public YouTube playlist,
+choose a synthetic listener ID (1–4,000), or skip setup. The selected playlist
+or listener is saved for the session and restored after refresh. **Reset setup**
+clears these settings, learned preferences, and the current queue without
+clearing chat or recommendation history. Use **Personalize your queue** to change the playlist,
+sample, or listener preferences later, and save changes for the session;
+**Session details** beneath the queue contains the recommendation note and
+checks. Imported tracks and the candidate catalog are available in their
+expandable sections.
 For a direct request such as “songs by my top artist,” the loaded sample's
 top artist is used for catalog search and only tracks credited to that artist
 are selected. Matching sample reference tracks are eligible, but playlist,
@@ -281,7 +302,7 @@ The separate **Load Songs for Prompt** action verifies AI-proposed titles and
 artist credits against the local catalog. It requires a credible artist and an
 exact, recognized-version, or high-confidence title match; a matching artist
 alone does not validate a different song.
-The AI Taste Concierge uses the loaded sample profile for direct top-artist
+Music chat uses the loaded sample profile for direct top-artist
 questions and distinguishes it from the listener's real preferences. It can
 recover some malformed model responses and retries when they cannot be read.
 The API sets task-specific output-token limits to constrain generated response

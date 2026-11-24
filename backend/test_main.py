@@ -1223,7 +1223,7 @@ class ReadOnlyQueryValidationTests(unittest.TestCase):
 
 class YouTubePreviewTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.song = YouTubePreviewRequest(title="Song", artist="Artist")
+        self.song = YouTubePreviewRequest(title="Song", artist="Artist", duration_seconds=120)
         self.response = httpx.Response(
             200,
             json={"items": [
@@ -1232,18 +1232,25 @@ class YouTubePreviewTests(unittest.TestCase):
             ]},
             request=httpx.Request("GET", "https://www.googleapis.com/youtube/v3/search"),
         )
+        self.details = httpx.Response(
+            200,
+            json={"items": [{"id": "abcdefghijk", "contentDetails": {"duration": "PT2M"}}]},
+            request=httpx.Request("GET", "https://www.googleapis.com/youtube/v3/videos"),
+        )
 
     def test_search_uses_key_and_granite_selects_only_returned_video(self) -> None:
         with (
             patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
-            patch("main.httpx.get", return_value=self.response) as search,
-            patch("main.call_cloudflare_worker", return_value={"video_id": "abcdefghijk"}) as model,
+            patch("main.httpx.get", side_effect=[self.response, self.details]) as search,
+            patch("main.call_cloudflare_worker", return_value={"video_id": "abcdefghijk", "confidence": "high"}) as model,
         ):
             result = find_youtube_preview(self.song)
         self.assertEqual(result["suggested_video_id"], "abcdefghijk")
         self.assertEqual(len(result["candidates"]), 1)
-        self.assertEqual(search.call_args.kwargs["headers"]["X-Goog-Api-Key"], "test-key")
-        self.assertEqual(search.call_args.kwargs["params"]["videoEmbeddable"], "true")
+        self.assertEqual(search.call_args_list[0].kwargs["headers"]["X-Goog-Api-Key"], "test-key")
+        self.assertEqual(search.call_args_list[0].kwargs["params"]["videoEmbeddable"], "true")
+        self.assertEqual(search.call_args_list[1].kwargs["params"]["id"], "abcdefghijk")
+        self.assertEqual(result["candidates"][0]["duration_seconds"], 120)
         self.assertEqual(model.call_args.kwargs["model"], CHAT_MODEL)
         self.assertNotIn("test-key", str(model.call_args))
 
@@ -1263,7 +1270,7 @@ class YouTubePreviewTests(unittest.TestCase):
         for result in ({"video_id": "invented-id"}, HTTPException(status_code=502, detail="failure")):
             with (
                 patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
-                patch("main.httpx.get", return_value=self.response),
+                patch("main.httpx.get", side_effect=[self.response, self.details]),
                 patch("main.call_cloudflare_worker", side_effect=result if isinstance(result, Exception) else None,
                       return_value=result),
             ):
@@ -1290,12 +1297,100 @@ class YouTubePreviewTests(unittest.TestCase):
     def test_preview_http_endpoint_returns_search_results(self) -> None:
         with (
             patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
-            patch("main.httpx.get", return_value=self.response),
-            patch("main.call_cloudflare_worker", return_value={"video_id": "abcdefghijk"}),
+            patch("main.httpx.get", side_effect=[self.response, self.details]),
+            patch("main.call_cloudflare_worker", return_value={"video_id": "abcdefghijk", "confidence": "high"}),
         ):
-            response = TestClient(app).post("/api/youtube/preview", json={"title": "Song", "artist": "Artist"})
+            response = TestClient(app).post("/api/youtube/preview", json={"title": "Song", "artist": "Artist", "duration_seconds": 120})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["suggested_video_id"], "abcdefghijk")
+
+    def test_long_video_cannot_be_auto_selected_but_remains_an_option(self) -> None:
+        search = httpx.Response(
+            200,
+            json={"items": [
+                {"id": {"videoId": "abcdefghijk"}, "snippet": {"title": "Song", "channelTitle": "Artist"}},
+                {"id": {"videoId": "zyxwvutsrqp"}, "snippet": {"title": "Interview", "channelTitle": "Artist"}},
+            ]},
+            request=httpx.Request("GET", "https://www.googleapis.com/youtube/v3/search"),
+        )
+        details = httpx.Response(
+            200,
+            json={"items": [
+                {"id": "abcdefghijk", "contentDetails": {"duration": "PT2M30S"}},
+                {"id": "zyxwvutsrqp", "contentDetails": {"duration": "PT15M"}},
+            ]},
+            request=httpx.Request("GET", "https://www.googleapis.com/youtube/v3/videos"),
+        )
+        with (
+            patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
+            patch("main.httpx.get", side_effect=[search, details]),
+            patch("main.call_cloudflare_worker", return_value={"video_id": "zyxwvutsrqp", "confidence": "high"}) as model,
+        ):
+            result = find_youtube_preview(self.song)
+        self.assertIsNone(result["suggested_video_id"])
+        self.assertEqual([item["duration_seconds"] for item in result["candidates"]], [150, 900])
+        self.assertEqual([item["duration_match"] for item in result["candidates"]], [True, False])
+        self.assertNotIn("zyxwvutsrqp", model.call_args.args[1])
+
+    def test_low_or_missing_model_confidence_requires_user_choice(self) -> None:
+        for match in ({"video_id": "abcdefghijk", "confidence": "low"}, {"video_id": "abcdefghijk"}):
+            with (
+                patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
+                patch("main.httpx.get", side_effect=[self.response, self.details]),
+                patch("main.call_cloudflare_worker", return_value=match),
+            ):
+                result = find_youtube_preview(self.song)
+            self.assertIsNone(result["suggested_video_id"])
+            self.assertTrue(result["candidates"])
+
+    def test_unavailable_duration_data_keeps_choices_without_auto_play(self) -> None:
+        failure = httpx.Response(403, request=httpx.Request("GET", "https://www.googleapis.com/youtube/v3/videos"))
+        with (
+            patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
+            patch("main.httpx.get", side_effect=[self.response, failure]),
+            patch("main.call_cloudflare_worker") as model,
+        ):
+            result = find_youtube_preview(self.song)
+        self.assertIsNone(result["suggested_video_id"])
+        self.assertIsNone(result["candidates"][0]["duration_seconds"])
+        self.assertIn("duration", result["warning"].lower())
+        model.assert_not_called()
+
+    def test_outside_duration_tolerance_or_unknown_track_length_requires_choice(self) -> None:
+        details = httpx.Response(
+            200,
+            json={"items": [{"id": "abcdefghijk", "contentDetails": {"duration": "PT2M31S"}}]},
+            request=httpx.Request("GET", "https://www.googleapis.com/youtube/v3/videos"),
+        )
+        for song in (self.song, YouTubePreviewRequest(title="Song", artist="Artist")):
+            with (
+                patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
+                patch("main.httpx.get", side_effect=[self.response, details]),
+                patch("main.call_cloudflare_worker") as model,
+            ):
+                result = find_youtube_preview(song)
+            self.assertIsNone(result["suggested_video_id"])
+            self.assertEqual(result["candidates"][0]["duration_seconds"], 151)
+            self.assertEqual(result["candidates"][0]["duration_match"], False if song.duration_seconds else None)
+            model.assert_not_called()
+
+    def test_longer_tracks_use_proportional_duration_tolerance(self) -> None:
+        song = YouTubePreviewRequest(title="Song", artist="Artist", duration_seconds=600)
+        for duration, matches in (("PT12M30S", True), ("PT12M31S", False)):
+            details = httpx.Response(
+                200,
+                json={"items": [{"id": "abcdefghijk", "contentDetails": {"duration": duration}}]},
+                request=httpx.Request("GET", "https://www.googleapis.com/youtube/v3/videos"),
+            )
+            with (
+                patch.dict("os.environ", {"YOUTUBE_API_KEY": "test-key"}),
+                patch("main.httpx.get", side_effect=[self.response, details]),
+                patch("main.call_cloudflare_worker", return_value={"video_id": "abcdefghijk", "confidence": "high"}) as model,
+            ):
+                result = find_youtube_preview(song)
+            self.assertEqual(result["candidates"][0]["duration_match"], matches)
+            self.assertEqual(result["suggested_video_id"], "abcdefghijk" if matches else None)
+            self.assertEqual(model.called, matches)
 
 
 if __name__ == "__main__":

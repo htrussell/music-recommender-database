@@ -10,6 +10,8 @@
         let PENDING_TASTE_INSIGHTS = [];
         let LAST_RECOMMENDATION_DATA = null;
         let DEMO_PROFILE = null;
+        let WELCOME_REQUEST = 0;
+        let WELCOME_SUMMARY_BEFORE_PLAYLIST = null;
 
         function escapeHtml(value) {
             return String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -51,12 +53,173 @@
 
         // Initialize UI on load
         window.onload = async function() {
-            renderCatalogTable();
-            setupCharCounter();
-            await loadSavedListenerProfile();
-            checkLocalAiStatus();
-            loadScenario(1);
+            window.addEventListener("focus", revealPendingYouTubeChoices);
+            document.addEventListener("visibilitychange", revealPendingYouTubeChoices);
+            try {
+                renderCatalogTable();
+                setupCharCounter();
+                await loadSavedListenerProfile();
+                checkLocalAiStatus();
+                loadScenario(1, false);
+                try {
+                    if (sessionStorage.getItem("goalModeWelcomeComplete") === "1") showMainView();
+                } catch (err) {
+                    showToast(`Could not read setup state: ${err.message}`, "error");
+                }
+            } finally {
+                document.getElementById("welcomeView").removeAttribute("inert");
+                document.getElementById("resetSetupBtn").disabled = false;
+            }
         };
+
+        function showMainView() {
+            document.getElementById("welcomeView").classList.add("hidden");
+            document.getElementById("mainNavigation").classList.remove("hidden");
+            switchTab("prototype");
+        }
+
+        function chooseWelcomeSource(source) {
+            WELCOME_REQUEST++;
+            if (source !== "playlist" && PENDING_PLAYLIST && !NORMALIZED_PLAYLIST) {
+                PENDING_PLAYLIST = null;
+                document.getElementById("listenerTasteSummary").value = WELCOME_SUMMARY_BEFORE_PLAYLIST ?? "";
+                WELCOME_SUMMARY_BEFORE_PLAYLIST = null;
+                document.getElementById("playlistReviewPanel").classList.add("hidden");
+                document.getElementById("welcomePlaylistReview").classList.add("hidden");
+            }
+            document.getElementById("welcomePlaylistForm").classList.toggle("hidden", source !== "playlist");
+            document.getElementById("welcomeProfileForm").classList.toggle("hidden", source !== "profile");
+            document.getElementById("welcomeStatus").textContent = "";
+            document.getElementById(source === "playlist" ? "welcomePlaylistInput" : "welcomeProfileInput").focus();
+        }
+
+        function completeWelcome() {
+            try {
+                sessionStorage.setItem("goalModeWelcomeComplete", "1");
+            } catch (err) {
+                document.getElementById("welcomeStatus").textContent = `Could not save setup: ${err.message}`;
+                return false;
+            }
+            WELCOME_REQUEST++;
+            if (!NORMALIZED_PLAYLIST && PENDING_PLAYLIST) {
+                PENDING_PLAYLIST = null;
+                document.getElementById("listenerTasteSummary").value = WELCOME_SUMMARY_BEFORE_PLAYLIST ?? "";
+                WELCOME_SUMMARY_BEFORE_PLAYLIST = null;
+                document.getElementById("playlistReviewPanel").classList.add("hidden");
+            }
+            showMainView();
+            document.getElementById("goalTextInput").focus();
+            return true;
+        }
+
+        async function importWelcomePlaylist() {
+            const value = document.getElementById("welcomePlaylistInput").value.trim();
+            const status = document.getElementById("welcomeStatus");
+            if (!value) {
+                status.textContent = "Enter a public YouTube playlist URL or ID.";
+                return;
+            }
+            const request = ++WELCOME_REQUEST;
+            const button = document.getElementById("welcomePlaylistButton");
+            button.disabled = true;
+            if (!PENDING_PLAYLIST) WELCOME_SUMMARY_BEFORE_PLAYLIST = document.getElementById("listenerTasteSummary").value;
+            document.getElementById("welcomePlaylistReview").classList.add("hidden");
+            document.getElementById("youtubePlaylistIdInput").value = value;
+            status.textContent = "Importing playlist...";
+            const loaded = await loadYouTubePlaylist(() => request === WELCOME_REQUEST);
+            button.disabled = false;
+            if (request !== WELCOME_REQUEST) return;
+            status.textContent = document.getElementById("youtubeAuthStatus").textContent;
+            if (loaded) document.getElementById("welcomePlaylistReview").classList.remove("hidden");
+        }
+
+        function completeWelcomePlaylist() {
+            if (!PENDING_PLAYLIST?.tracks.length) return;
+            confirmPlaylistReview();
+            if (saveListenerProfile()) {
+                WELCOME_SUMMARY_BEFORE_PLAYLIST = null;
+                completeWelcome();
+            }
+            else document.getElementById("welcomeStatus").textContent = "Could not save your playlist for this session. Please try again.";
+        }
+
+        async function loadWelcomeProfile() {
+            const listenerId = Number(document.getElementById("welcomeProfileInput").value);
+            const status = document.getElementById("welcomeStatus");
+            if (!Number.isInteger(listenerId) || listenerId < 1 || listenerId > 4000) {
+                status.textContent = "Enter a sample listener ID from 1 to 4,000.";
+                return;
+            }
+            const request = ++WELCOME_REQUEST;
+            const button = document.getElementById("welcomeProfileButton");
+            button.disabled = true;
+            status.textContent = "Loading sample listener...";
+            const loaded = await loadDemoProfileById(listenerId, () => request === WELCOME_REQUEST);
+            button.disabled = false;
+            if (request !== WELCOME_REQUEST) return;
+            if (!loaded) {
+                status.textContent = document.getElementById("demoProfileStatus").textContent;
+            } else if (saveListenerProfile()) {
+                completeWelcome();
+            } else {
+                status.textContent = "Could not save your listener for this session. Please try again.";
+            }
+        }
+
+        function resetPersonalization() {
+            if (!confirm("Reset your playlist, listener preferences, and current queue? Your recommendation history and chat will be kept.")) return;
+            try {
+                sessionStorage.removeItem("goalModeListenerProfile");
+                sessionStorage.removeItem("goalModeWelcomeComplete");
+            } catch (err) {
+                showToast(`Could not reset setup: ${err.message}`, "error");
+                return;
+            }
+            WELCOME_REQUEST++;
+            resetYouTubeQueue();
+            WELCOME_SUMMARY_BEFORE_PLAYLIST = null;
+            PENDING_PLAYLIST = null;
+            NORMALIZED_PLAYLIST = null;
+            PLAYLIST_ITEMS = [];
+            playlistVideoIds = new Set();
+            playlistPreferenceSummary = "";
+            DEMO_PROFILE = null;
+            CONFIRMED_TASTE_INSIGHTS = [];
+            PENDING_TASTE_INSIGHTS = [];
+            LAST_RECOMMENDATION_DATA = null;
+            CATALOG_ITEMS = CATALOG_ITEMS.filter(item => !item.tags.includes("playlist-seed") && !item.tags.includes("demo-profile-seed"));
+            document.getElementById("listenerTasteSummary").value = "";
+            document.getElementById("listenerExplicitPreferences").value = "";
+            document.getElementById("youtubePlaylistIdInput").value = "";
+            document.getElementById("welcomePlaylistInput").value = "";
+            document.getElementById("welcomeProfileInput").value = "1";
+            document.getElementById("demoProfileIdInput").value = "1";
+            document.getElementById("profileSaveStatus").textContent = "Not saved";
+            document.getElementById("youtubeAuthStatus").textContent = "Public playlist imports don't require an API key.";
+            document.getElementById("playlistReviewPanel").classList.add("hidden");
+            document.getElementById("welcomePlaylistReview").classList.add("hidden");
+            document.getElementById("welcomePlaylistForm").classList.add("hidden");
+            document.getElementById("welcomeProfileForm").classList.add("hidden");
+            document.getElementById("welcomeStatus").textContent = "";
+            document.getElementById("outputContent").classList.add("hidden");
+            document.getElementById("emptyState").classList.remove("hidden");
+            document.getElementById("statusTag").textContent = "Ready";
+            document.getElementById("statusTag").className = "bg-slate-700 text-slate-300 text-xs px-2.5 py-1 rounded-full font-mono";
+            document.getElementById("catalogStatus").textContent = `${CATALOG_ITEMS.length} catalog tracks loaded`;
+            document.getElementById("chatContextDot").classList.add("hidden");
+            document.getElementById("chatQueueCountBadge").textContent = "0 tracks";
+            document.getElementById("chatQueueSnapshotList").innerHTML = "";
+            renderDemoProfile();
+            renderPlaylistHistory();
+            renderCatalogTable();
+            renderPendingTasteInsights();
+            refreshChatContextDisplay();
+            document.getElementById("prototypeTabView").classList.add("hidden");
+            document.getElementById("chatTabView").classList.add("hidden");
+            document.getElementById("mainNavigation").classList.add("hidden");
+            document.getElementById("welcomeView").classList.remove("hidden");
+            document.getElementById("welcomeHeading").focus();
+        }
 
         async function checkLocalAiStatus() {
             const badge = document.getElementById("apiStatusBadge");
@@ -64,11 +227,12 @@
                 const response = await fetch("/healthz");
                 if (!response.ok) throw new Error(`AI service HTTP ${response.status}`);
                 const data = await response.json();
-                badge.className = "bg-emerald-900/50 text-emerald-300 border border-emerald-700/50 px-2 py-0.5 rounded text-[10px] flex items-center";
-                badge.innerHTML = `<i class="fa-solid fa-microchip mr-1"></i> ${escapeHtml(data.model)} ready`;
+                badge.className = "service-status is-ready";
+                badge.textContent = "Ready";
+                badge.title = data.model;
             } catch (err) {
-                badge.className = "bg-red-900/50 text-red-300 border border-red-700/50 px-2 py-0.5 rounded text-[10px] flex items-center";
-                badge.textContent = "Local AI unavailable";
+                badge.className = "service-status is-unavailable";
+                badge.textContent = "AI unavailable";
             }
         }
 
@@ -93,6 +257,7 @@
                 protoBtn.className = activeClass;
                 protoBtn.setAttribute("aria-selected", "true");
             } else if (tabId === "chat") {
+                closeYouTubePreview();
                 chatView.classList.remove("hidden");
                 chatBtn.className = activeClass;
                 chatBtn.setAttribute("aria-selected", "true");
@@ -143,14 +308,14 @@
             });
         }
 
-        function loadScenario(num) {
+        function loadScenario(num, notify = true) {
             const scenario = SCENARIOS[num];
             if (!scenario) return;
             document.getElementById("goalTextInput").value = scenario.goal;
             document.getElementById("budgetInput").value = scenario.budget;
             document.getElementById("exclusionsInput").value = scenario.exclusions;
             document.getElementById("charCounter").textContent = `${scenario.goal.length} / 500`;
-            showToast(`Loaded Preset Scenario ${num}`, "info");
+            if (notify) showToast("Starting point added", "info");
         }
 
         function renderCatalogTable() {
@@ -317,11 +482,18 @@
                     <button type="button" aria-label="Remove ${escapeHtml(track.title)}" onclick="removePlaylistPreviewTrack(${index})" class="shrink-0 px-1 text-red-300 hover:text-red-200">Remove</button>
                 </div>
             `).join("") || `<p class="text-center text-[10px] text-slate-500 py-2">No tracks remain. Import another playlist.</p>`;
+            document.getElementById("welcomePlaylistTitle").textContent = PENDING_PLAYLIST?.playlistName || "";
+            document.getElementById("welcomePlaylistCount").textContent = `${tracks.length} tracks`;
+            document.getElementById("welcomePlaylistTracks").innerHTML = container.innerHTML;
+            document.getElementById("welcomeConfirmPlaylist").disabled = !tracks.length;
         }
 
         function removePlaylistPreviewTrack(index) {
             if (!PENDING_PLAYLIST || !Number.isInteger(index) || index < 0 || index >= PENDING_PLAYLIST.tracks.length) return;
+            const summaryInput = document.getElementById("listenerTasteSummary");
+            const isGeneratedSummary = summaryInput.value === createTasteSummary(PENDING_PLAYLIST.tracks);
             PENDING_PLAYLIST.tracks.splice(index, 1);
+            if (isGeneratedSummary) summaryInput.value = PENDING_PLAYLIST.tracks.length ? createTasteSummary(PENDING_PLAYLIST.tracks) : "";
             renderPlaylistReview();
         }
 
@@ -385,7 +557,7 @@
             URL.revokeObjectURL(url);
         }
 
-        async function loadYouTubePlaylist() {
+        async function loadYouTubePlaylist(isCurrent = () => true) {
             const playlistUrl = document.getElementById("youtubePlaylistIdInput").value.trim();
             const status = document.getElementById("youtubeAuthStatus");
             const button = document.getElementById("loadYoutubeBtn");
@@ -406,18 +578,23 @@
                     body: JSON.stringify({ playlistUrl })
                 });
                 const playlist = await response.json();
+                if (!isCurrent()) return false;
                 if (!response.ok) throw new Error(playlist.detail || `Playlist import HTTP ${response.status}`);
+                if (!playlist || !Array.isArray(playlist.tracks)) throw new Error("The playlist service returned an invalid response.");
 
                 setPlaylistReview(playlist);
                 const tracks = playlist.tracks || [];
                 status.textContent = `Found ${tracks.length} videos. Review the normalized playlist before using it.`;
                 status.className = "text-[10px] text-emerald-400 mt-1";
                 showToast(`Converted "${playlist.playlistName}" to normalized playlist JSON. Review it before use.`, "success");
+                return true;
             } catch (err) {
+                if (!isCurrent()) return false;
                 console.error("YouTube playlist import failed:", err);
                 status.textContent = `Import failed: ${err.message}`;
                 status.className = "text-[10px] text-red-400 mt-1";
                 showToast(`YouTube playlist import failed: ${err.message}`, "error");
+                return false;
             } finally {
                 button.disabled = false;
                 button.classList.remove("opacity-50", "cursor-not-allowed");
@@ -436,8 +613,10 @@
                 sessionStorage.setItem("goalModeListenerProfile", JSON.stringify(profile));
                 document.getElementById("profileSaveStatus").textContent = "Saved in this session";
                 showToast("Listener profile saved for this browser session.", "success");
+                return true;
             } catch (err) {
                 showToast(`Could not save listener profile: ${err.message}`, "error");
+                return false;
             }
         }
 
@@ -469,7 +648,10 @@
                     confirmPlaylistReview();
                 }
                 if (Number.isInteger(profile.demoProfileId) && profile.demoProfileId > 0) {
-                    await loadDemoProfileById(profile.demoProfileId);
+                    if (!await loadDemoProfileById(profile.demoProfileId)) {
+                        document.getElementById("profileSaveStatus").textContent = "Sample profile could not be restored";
+                        return;
+                    }
                 }
                 document.getElementById("profileSaveStatus").textContent = "Restored for this session";
                 renderLearnedTasteNotes();
@@ -678,7 +860,7 @@
             await loadDemoProfileById(listenerId);
         }
 
-        async function loadDemoProfileById(listenerId) {
+        async function loadDemoProfileById(listenerId, isCurrent = () => true) {
             const button = document.getElementById("loadDemoProfileBtn");
             const status = document.getElementById("demoProfileStatus");
             button.disabled = true;
@@ -688,6 +870,7 @@
             try {
                 const response = await fetch(`/api/demo-profile/${listenerId}`);
                 const data = await response.json();
+                if (!isCurrent()) return false;
                 if (!response.ok) throw new Error(data.detail || `Demo profile HTTP ${response.status}`);
                 if (
                     !data.profile || data.profile.listener_id !== listenerId ||
@@ -715,10 +898,13 @@
                 renderDemoProfile();
                 renderCatalogTable();
                 refreshChatContextDisplay();
+                return true;
             } catch (err) {
+                if (!isCurrent()) return false;
                 status.textContent = `Could not load demo profile: ${err.message}`;
                 status.className = "text-[10px] text-red-300";
                 showToast(`Could not load demo profile: ${err.message}`, "error");
+                return false;
             } finally {
                 button.disabled = false;
                 button.classList.remove("opacity-50", "cursor-not-allowed");
@@ -1237,6 +1423,7 @@ ${listenerContext ? `\nLISTENER TASTE CONTEXT:\n${listenerContext}` : ""}
                 showToast(`Could not read recommendation history: ${err.message}`, "error");
                 return;
             }
+            resetYouTubeQueue();
             setLoading(true);
             setGenerationProgress(8, "Searching the catalog...", "Matching exact goal terms and exclusions");
             document.getElementById("loadingStateTitle").textContent = "Finding catalog tracks for your goal...";
@@ -1502,44 +1689,231 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
         let YOUTUBE_PREVIEW_QUEUE = [];
         let YOUTUBE_PREVIEW_CANDIDATES = [];
         let YOUTUBE_PREVIEW_REQUEST = 0;
+        let YOUTUBE_PLAYER_VERSION = 0;
+        let YOUTUBE_PLAYER = null;
+        let YOUTUBE_API_PROMISE = null;
+        let YOUTUBE_ACTIVE_TRACK_ID = null;
+        let YOUTUBE_WAITING_AFTER_ID = null;
+        let YOUTUBE_QUEUE_STATES = new Map();
+        let YOUTUBE_QUEUE_BUILDING = false;
+        let YOUTUBE_CHOICE_PENDING = false;
+        let YOUTUBE_CHOICE_WARNING = "";
+
+        function youtubeTrackId(item, index) {
+            return String(item.id ?? index);
+        }
+
+        function destroyYouTubePlayer() {
+            YOUTUBE_PLAYER_VERSION++;
+            if (YOUTUBE_PLAYER) YOUTUBE_PLAYER.destroy();
+            YOUTUBE_PLAYER = null;
+            document.getElementById("youtubePreviewPlayer").innerHTML = "";
+        }
+
+        function resetYouTubeQueue() {
+            closeYouTubePreview();
+            YOUTUBE_PREVIEW_QUEUE = [];
+            YOUTUBE_QUEUE_STATES = new Map();
+            YOUTUBE_QUEUE_BUILDING = false;
+        }
 
         function closeYouTubePreview() {
             YOUTUBE_PREVIEW_REQUEST++;
             YOUTUBE_PREVIEW_CANDIDATES = [];
-            document.getElementById("youtubePreviewPlayer").innerHTML = "";
+            YOUTUBE_ACTIVE_TRACK_ID = null;
+            YOUTUBE_WAITING_AFTER_ID = null;
+            YOUTUBE_CHOICE_PENDING = false;
+            destroyYouTubePlayer();
             document.getElementById("youtubePreviewCandidates").innerHTML = "";
+            document.getElementById("youtubePreviewOptions").classList.add("hidden");
             document.getElementById("youtubePreview").classList.add("hidden");
         }
 
-        function selectYouTubePreview(index) {
-            const candidate = YOUTUBE_PREVIEW_CANDIDATES[index];
-            if (!candidate || !/^[A-Za-z0-9_-]{11}$/.test(candidate.video_id)) return;
-            document.getElementById("youtubePreviewPlayer").innerHTML =
-                `<iframe title="YouTube video player" src="https://www.youtube.com/embed/${candidate.video_id}" ` +
-                `style="width:100%; min-width:200px; min-height:200px; aspect-ratio:16 / 9" ` +
-                `allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
+        function loadYouTubePlayerApi() {
+            if (window.YT?.Player) return Promise.resolve(window.YT);
+            if (YOUTUBE_API_PROMISE) return YOUTUBE_API_PROMISE;
+            YOUTUBE_API_PROMISE = new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                const timeout = window.setTimeout(() => {
+                    script.remove();
+                    reject(new Error("YouTube player API timed out."));
+                }, 15000);
+                window.onYouTubeIframeAPIReady = () => {
+                    window.clearTimeout(timeout);
+                    resolve(window.YT);
+                };
+                script.onerror = () => {
+                    window.clearTimeout(timeout);
+                    script.remove();
+                    reject(new Error("Could not load the YouTube player API."));
+                };
+                script.src = "https://www.youtube.com/iframe_api";
+                document.head.appendChild(script);
+            }).catch(error => {
+                YOUTUBE_API_PROMISE = null;
+                throw error;
+            });
+            return YOUTUBE_API_PROMISE;
         }
 
-        async function openYouTubePreview(index) {
+        function youtubePlayerMostlyVisible() {
+            const player = document.getElementById("youtubePreviewPlayer");
+            const rect = player.getBoundingClientRect();
+            const visibleWidth = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+            const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+            return document.visibilityState === "visible" && rect.width > 0 && rect.height > 0 &&
+                visibleWidth * visibleHeight > rect.width * rect.height / 2;
+        }
+
+        function selectYouTubePreview(index, autoplay = false, manualSelection = true) {
+            const candidate = YOUTUBE_PREVIEW_CANDIDATES[index];
+            if (!candidate || !/^[A-Za-z0-9_-]{11}$/.test(candidate.video_id)) return;
+            YOUTUBE_CHOICE_PENDING = false;
+            YOUTUBE_PREVIEW_CANDIDATES.forEach((_, candidateIndex) => {
+                const button = document.getElementById(`youtube-choice-${candidateIndex}`);
+                if (button) button.setAttribute("aria-pressed", String(candidateIndex === index));
+            });
+            if (manualSelection) {
+                document.getElementById("youtubePreviewStatus").textContent = "Use the player to listen or choose another result.";
+                document.getElementById("youtubePreviewOptionsTitle").textContent = "Other versions";
+                document.getElementById("youtubePreviewOptions").open = false;
+                document.getElementById("youtubePreviewOptionsTitle").focus();
+            }
+            destroyYouTubePlayer();
+            const version = YOUTUBE_PLAYER_VERSION;
+            const origin = window.location?.origin;
+            const originParam = origin && origin !== "null" ? `&origin=${encodeURIComponent(origin)}` : "";
+            document.getElementById("youtubePreviewPlayer").innerHTML =
+                `<iframe id="youtubeEmbeddedPlayer" title="YouTube video player" src="https://www.youtube.com/embed/${candidate.video_id}?enablejsapi=1${originParam}" ` +
+                `style="width:100%; min-width:200px; min-height:200px; aspect-ratio:16 / 9" ` +
+                `allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
+            loadYouTubePlayerApi().then(YT => {
+                if (version !== YOUTUBE_PLAYER_VERSION) return;
+                YOUTUBE_PLAYER = new YT.Player("youtubeEmbeddedPlayer", {
+                    events: {
+                        onReady: event => {
+                            if (version !== YOUTUBE_PLAYER_VERSION || !autoplay) return;
+                            if (youtubePlayerMostlyVisible()) {
+                                document.getElementById("youtubePreviewStatus").textContent = "Starting next track. If playback doesn't begin, press play.";
+                                event.target.playVideo();
+                            } else {
+                                document.getElementById("youtubePreviewStatus").textContent = "Next track ready. Press play in the YouTube player.";
+                            }
+                        },
+                        onStateChange: event => {
+                            if (version === YOUTUBE_PLAYER_VERSION && event.data === 0) finishYouTubeTrack("finished");
+                        },
+                        onAutoplayBlocked: () => {
+                            if (version === YOUTUBE_PLAYER_VERSION) document.getElementById("youtubePreviewStatus").textContent = "Autoplay was blocked. Press play in the YouTube player.";
+                        },
+                        onError: () => {
+                            if (version === YOUTUBE_PLAYER_VERSION) document.getElementById("youtubePreviewStatus").textContent = "This video cannot be played here. Choose another result or skip this track.";
+                        }
+                    }
+                });
+            }).catch(error => {
+                if (version === YOUTUBE_PLAYER_VERSION) {
+                    document.getElementById("youtubePreviewStatus").textContent = `${error.message} Automatic queue advancement is unavailable; retry the preview or skip.`;
+                }
+            });
+        }
+
+        function updateYouTubeQueueStates() {
+            YOUTUBE_PREVIEW_QUEUE.forEach((item, index) => {
+                if (!item) return;
+                const state = YOUTUBE_QUEUE_STATES.get(youtubeTrackId(item, index));
+                const card = document.getElementById(`queue-track-${index}`);
+                const label = document.getElementById(`queue-state-${index}`);
+                if (card) card.classList.toggle("track-completed", !!state);
+                if (label) label.textContent = state === "finished" ? "Finished" : state === "skipped" ? "Skipped" : "";
+            });
+        }
+
+        function advanceYouTubeQueue(afterId) {
+            const currentIndex = YOUTUBE_PREVIEW_QUEUE.findIndex((item, index) => item && youtubeTrackId(item, index) === afterId);
+            const nextIndex = YOUTUBE_PREVIEW_QUEUE.findIndex((item, index) =>
+                index > currentIndex && item && !YOUTUBE_QUEUE_STATES.has(youtubeTrackId(item, index))
+            );
+            if (currentIndex >= 0 && nextIndex >= 0) {
+                YOUTUBE_WAITING_AFTER_ID = null;
+                openYouTubePreview(nextIndex, true);
+                return;
+            }
+            YOUTUBE_WAITING_AFTER_ID = YOUTUBE_QUEUE_BUILDING ? afterId : null;
+            YOUTUBE_ACTIVE_TRACK_ID = null;
+            YOUTUBE_PREVIEW_REQUEST++;
+            destroyYouTubePlayer();
+            YOUTUBE_CHOICE_PENDING = false;
+            document.getElementById("youtubePreviewCandidates").innerHTML = "";
+            document.getElementById("youtubePreviewOptions").classList.add("hidden");
+            document.getElementById("youtubeSkipBtn").disabled = true;
+            document.getElementById("youtubePreviewStatus").textContent = YOUTUBE_QUEUE_BUILDING
+                ? "Waiting for more tracks as the queue is built."
+                : "You've reached the end of the queue.";
+        }
+
+        function finishYouTubeTrack(state) {
+            const id = YOUTUBE_ACTIVE_TRACK_ID;
+            if (id === null || YOUTUBE_QUEUE_STATES.has(id)) return;
+            YOUTUBE_QUEUE_STATES.set(id, state);
+            updateYouTubeQueueStates();
+            advanceYouTubeQueue(id);
+        }
+
+        function skipCurrentYouTubeTrack() {
+            finishYouTubeTrack("skipped");
+        }
+
+        function youtubeExpectedDuration(item) {
+            if (Number.isFinite(item.durationMs) && item.durationMs > 0) return item.durationMs / 1000;
+            if (item.catalogMetadata) return null;
+            if (Number.isFinite(item.durationSeconds) && item.durationSeconds > 0) return item.durationSeconds;
+            return null;
+        }
+
+        function revealPendingYouTubeChoices() {
+            if (!YOUTUBE_CHOICE_PENDING || document.visibilityState !== "visible" || !document.hasFocus()) return;
+            YOUTUBE_CHOICE_PENDING = false;
+            const options = document.getElementById("youtubePreviewOptions");
+            options.classList.remove("hidden");
+            options.open = true;
+            document.getElementById("youtubePreviewOptionsTitle").textContent = "Choose a version";
+            document.getElementById("youtubePreviewStatus").textContent = YOUTUBE_CHOICE_WARNING;
+        }
+
+        async function openYouTubePreview(index, autoplay = false) {
             const item = YOUTUBE_PREVIEW_QUEUE[index];
             if (!item) return;
             const requestId = ++YOUTUBE_PREVIEW_REQUEST;
+            const id = youtubeTrackId(item, index);
+            YOUTUBE_ACTIVE_TRACK_ID = id;
+            YOUTUBE_WAITING_AFTER_ID = null;
+            YOUTUBE_CHOICE_PENDING = false;
+            if (!autoplay) {
+                YOUTUBE_QUEUE_STATES.delete(id);
+                updateYouTubeQueueStates();
+            }
             const panel = document.getElementById("youtubePreview");
             const status = document.getElementById("youtubePreviewStatus");
             document.getElementById("youtubePreviewTitle").textContent = `YouTube preview: ${item.title} — ${item.artist}`;
             document.getElementById("youtubePreviewSearchLink").href =
                 `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.artist} ${item.title}`)}`;
-            document.getElementById("youtubePreviewPlayer").innerHTML = "";
+            destroyYouTubePlayer();
             document.getElementById("youtubePreviewCandidates").innerHTML = "";
+            const options = document.getElementById("youtubePreviewOptions");
+            options.classList.add("hidden");
+            options.open = false;
+            document.getElementById("youtubeSkipBtn").disabled = false;
             YOUTUBE_PREVIEW_CANDIDATES = [];
             panel.classList.remove("hidden");
-            panel.scrollIntoView({ block: "nearest" });
+            if (!autoplay) panel.scrollIntoView({ block: "nearest" });
             status.textContent = "Searching YouTube…";
+            const durationSeconds = youtubeExpectedDuration(item);
             try {
                 const response = await fetch("/api/youtube/preview", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ title: item.title, artist: item.artist })
+                    body: JSON.stringify({ title: item.title, artist: item.artist, duration_seconds: durationSeconds })
                 });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.detail || "YouTube search failed.");
@@ -1551,17 +1925,32 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                     typeof candidate.title === "string" && typeof candidate.channel === "string"
                 );
                 const candidates = YOUTUBE_PREVIEW_CANDIDATES;
+                document.getElementById("youtubePreviewExpectedDuration").textContent = durationSeconds
+                    ? `Track length: ${formatDuration(durationSeconds * 1000)}`
+                    : "Track length unavailable.";
                 document.getElementById("youtubePreviewCandidates").innerHTML = candidates.map((candidate, candidateIndex) =>
-                    `<button type="button" onclick="selectYouTubePreview(${candidateIndex})" ` +
-                    `class="block w-full text-left text-xs text-blue-300 hover:text-white p-1">` +
-                    `${escapeHtml(candidate.title)} — ${escapeHtml(candidate.channel)}` +
-                    `${candidate.video_id === data.suggested_video_id ? " (suggested match)" : ""}</button>`
+                    `<button id="youtube-choice-${candidateIndex}" type="button" onclick="selectYouTubePreview(${candidateIndex})" ` +
+                    `class="preview-result" aria-pressed="false">` +
+                    `<span class="preview-result-copy"><strong>${escapeHtml(candidate.title)}</strong>` +
+                    `<small>${escapeHtml(candidate.channel)}${candidate.video_id === data.suggested_video_id ? " · Suggested" : ""}</small></span>` +
+                    `<span class="preview-result-length">${Number.isFinite(candidate.duration_seconds) && candidate.duration_seconds > 0
+                        ? escapeHtml(formatDuration(candidate.duration_seconds * 1000)) : "Length unavailable"}` +
+                    `${candidate.duration_match === false ? '<span class="preview-result-warning">Length differs</span>' : ""}</span></button>`
                 ).join("");
                 const selectedIndex = candidates.findIndex(candidate => candidate.video_id === data.suggested_video_id);
-                if (selectedIndex >= 0) selectYouTubePreview(selectedIndex);
-                status.textContent = data.warning || (candidates.length
-                    ? (selectedIndex >= 0 ? "Suggested match shown. Use the player to listen or choose another result." : "Choose a YouTube result to preview.")
-                    : "No embeddable YouTube results found.");
+                if (selectedIndex >= 0) {
+                    document.getElementById("youtubePreviewOptionsTitle").textContent = "Other versions";
+                    options.classList.remove("hidden");
+                    status.textContent = data.warning || "Suggested match shown. Use the player to listen or choose another version.";
+                    selectYouTubePreview(selectedIndex, autoplay, false);
+                } else if (candidates.length) {
+                    YOUTUBE_CHOICE_PENDING = true;
+                    YOUTUBE_CHOICE_WARNING = data.warning || "No high-confidence match. Choose a YouTube result or skip this track.";
+                    status.textContent = "A match needs review when you return to this tab.";
+                    revealPendingYouTubeChoices();
+                } else {
+                    status.textContent = data.warning || "No embeddable YouTube results found.";
+                }
             } catch (error) {
                 if (requestId === YOUTUBE_PREVIEW_REQUEST) {
                     status.textContent = error.message || "YouTube search failed.";
@@ -1579,8 +1968,8 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             statusTag.textContent = status.replace("_", " ").toUpperCase();
             
             if (partial || status === "generating") {
-                statusTag.className = "bg-violet-900/60 text-violet-300 border border-violet-700/50 text-xs px-2.5 py-1 rounded-full font-mono flex items-center gap-1.5";
-                statusTag.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles text-violet-400 text-[10px]"></i> BUILDING';
+                statusTag.className = "status-building text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5";
+                statusTag.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles text-[10px]"></i> BUILDING';
             } else if (status === "ok") {
                 statusTag.className = "bg-emerald-900/60 text-emerald-300 border border-emerald-700/50 text-xs px-2.5 py-1 rounded-full font-mono";
             } else if (status === "prompt_expanded" || status === "discovered_match" || status === "outside_discovery") {
@@ -1604,12 +1993,12 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
 
             const prefEl = document.getElementById("resPreferredTopics");
             prefEl.innerHTML = (data.preferred_topics || []).map(t => 
-                `<span class="bg-blue-900/50 text-blue-300 border border-blue-700/40 px-1.5 py-0.5 rounded text-[10px]">${escapeHtml(t)}</span>`
+                `<span class="topic-chip">${escapeHtml(t)}</span>`
             ).join("") || "<span class='text-slate-500'>None</span>";
 
             const exclEl = document.getElementById("resExcludedTopics");
             exclEl.innerHTML = (data.excluded_topics || []).map(t => 
-                `<span class="bg-red-900/50 text-red-300 border border-red-700/40 px-1.5 py-0.5 rounded text-[10px]">${escapeHtml(t)}</span>`
+                `<span class="topic-chip topic-chip-excluded">${escapeHtml(t)}</span>`
             ).join("") || "<span class='text-slate-500'>None</span>";
 
             // Process recommendations
@@ -1621,6 +2010,7 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                 getRecommendationExclusions(getPreviouslyRecommendedIds(), sampleArtist)
             );
             YOUTUBE_PREVIEW_QUEUE = recommendations.map(rec => CATALOG_ITEMS.find(item => item.id === rec.content_id));
+            YOUTUBE_QUEUE_BUILDING = partial;
             data.recommendations = recommendations;
             if (!partial) rememberRecommendedIds(recommendations);
 
@@ -1654,38 +2044,36 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                     const imgElementId = `queue-cover-${index}`;
 
                     return `
-                        <div class="bg-slate-900/90 border ${isViolation ? 'border-red-500' : 'border-slate-700/80'} rounded-lg p-3 space-y-2 shadow-sm">
-                            <div class="flex items-center space-x-3">
+                        <div id="queue-track-${index}" class="track-card ${isViolation ? 'track-card-warning' : ''}">
+                            <div class="track-main">
+                                <span class="track-number">${index + 1}</span>
                                 <img id="${imgElementId}"
                                      src="${escapeHtml(safeHttpsUrl(item.cover) || `https://placehold.co/80x80/1e293b/64748b?text=Music`)}"
                                      alt="${escapeHtml(item.title)}"
-                                     class="w-12 h-12 rounded object-cover border border-slate-700 bg-slate-800 flex-shrink-0 shadow"
+                                     class="track-cover"
                                      onerror="this.src='https://placehold.co/80x80/1e293b/64748b?text=Music'">
-                                <div class="flex-1 min-w-0">
-                                    <div class="flex items-center justify-between">
-                                        <h4 class="text-xs font-semibold text-white truncate">${escapeHtml(item.title)}</h4>
-                                        <span class="text-[11px] font-mono font-medium text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                                            ${escapeHtml(formatDuration(trackDurationMs(item)))}
-                                        </span>
-                                    </div>
-                                    <div class="flex items-center space-x-2 mt-0.5">
-                                        <span class="text-[11px] text-emerald-300 truncate">${escapeHtml(item.artist)}</span>
-                                        ${isDiscovered ? '<span class="bg-purple-900/60 text-purple-300 border border-purple-700/50 text-[9px] px-1.5 py-0.2 rounded font-sans flex items-center gap-1"><i class="fa-solid fa-sparkles text-purple-400 text-[8px]"></i>AI Ranked</span>' : ''}
-                                        ${isFiller ? '<span class="bg-cyan-900/60 text-cyan-300 border border-cyan-700/50 text-[9px] px-1.5 py-0.2 rounded font-sans flex items-center gap-1"><i class="fa-solid fa-stopwatch text-cyan-400 text-[8px]"></i>Budget Fill</span>' : ''}
-                                        ${isPopular && !isDiscovered && !isFiller ? '<span class="bg-amber-900/60 text-amber-300 border border-amber-700/50 text-[9px] px-1.5 py-0.2 rounded font-sans flex items-center gap-1"><i class="fa-solid fa-fire text-amber-400 text-[8px]"></i>Popular</span>' : ''}
-                                        <span class="text-[10px] text-slate-400 bg-slate-800/80 px-1.5 py-0.2 rounded font-mono">${escapeHtml(item.id)}</span>
-                                    </div>
+                                <div class="track-info">
+                                    <h4>${escapeHtml(item.title)}</h4>
+                                    <p>${escapeHtml(item.artist)}</p>
                                 </div>
+                                <span class="track-duration">${escapeHtml(formatDuration(trackDurationMs(item)))}</span>
+                                ${YOUTUBE_PREVIEW_QUEUE[index] ? `<button type="button" onclick="openYouTubePreview(${index})" class="track-play" aria-label="Play ${escapeHtml(item.title)} on YouTube" title="Play on YouTube"><i class="fa-solid fa-play" aria-hidden="true"></i></button>` : ""}
                             </div>
-                            <p class="text-xs text-slate-300 bg-slate-800/50 p-2 rounded border border-slate-800 text-[11px] leading-relaxed">
-                                <i class="fa-solid fa-quote-left text-[9px] text-blue-400 mr-1.5"></i>${escapeHtml(rec.reason)}
-                            </p>
-                            ${YOUTUBE_PREVIEW_QUEUE[index] ? `<button type="button" onclick="openYouTubePreview(${index})" class="text-xs text-red-300 hover:text-white">Play on YouTube</button>` : ""}
+                            <div class="track-meta">
+                                <span id="queue-state-${index}" class="track-state"></span>
+                                ${isViolation ? '<span class="track-label track-label-warning">Exclusion match</span>' : ''}
+                                ${isDiscovered ? '<span class="track-label">AI ranked</span>' : ''}
+                                ${isFiller ? `<span class="track-label">${rec.source === "broad_fill" ? "Broader fill" : rec.source === "search_fill" ? "Search fill" : "Catalog fill"}</span>` : ''}
+                                ${isPopular && !isDiscovered && !isFiller ? '<span class="track-label">Popular</span>' : ''}
+                                <span>${escapeHtml(rec.reason)}</span>
+                            </div>
                         </div>
                     `;
                 }).join("");
 
             }
+            updateYouTubeQueueStates();
+            if (YOUTUBE_WAITING_AFTER_ID !== null) advanceYouTubeQueue(YOUTUBE_WAITING_AFTER_ID);
 
             // Metrics
             const metricDuration = document.getElementById("metricDuration");
@@ -1735,9 +2123,11 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
         function setLoading(isLoading) {
             const btn = document.getElementById("generateBtn");
             const clearHistoryBtn = document.getElementById("clearRecommendationHistoryBtn");
+            const resetSetupBtn = document.getElementById("resetSetupBtn");
             const emptyState = document.getElementById("emptyState");
             const loadingState = document.getElementById("loadingState");
             if (clearHistoryBtn) clearHistoryBtn.disabled = isLoading;
+            if (resetSetupBtn) resetSetupBtn.disabled = isLoading;
 
             if (isLoading) {
                 btn.disabled = true;
@@ -1811,6 +2201,12 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
 
         function renderPendingTasteInsights() {
             const container = document.getElementById("pendingTasteNotesContainer");
+            const badge = document.getElementById("chatPendingBadge");
+            if (badge) {
+                badge.textContent = PENDING_TASTE_INSIGHTS.length
+                    ? `${PENDING_TASTE_INSIGHTS.length} to review`
+                    : "";
+            }
             if (!container) return;
             if (!PENDING_TASTE_INSIGHTS.length) {
                 container.innerHTML = `<span class="text-[10px] text-slate-500 italic">No suggestions awaiting review.</span>`;
@@ -1988,7 +2384,7 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
 
             const isUser = role === "user";
             const msgDiv = document.createElement("div");
-            msgDiv.className = `flex items-start space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`;
+            msgDiv.className = `chat-message flex items-start space-x-3 ${isUser ? 'chat-message-user flex-row-reverse space-x-reverse' : 'chat-message-assistant'}`;
 
             const avatar = isUser
                 ? `<div class="w-7 h-7 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-white text-[11px] flex-shrink-0 mt-0.5 shadow"><i class="fa-solid fa-user"></i></div>`
