@@ -126,7 +126,13 @@ def rows_from_cursor(cursor: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 @app.on_event("startup")
 def load_music_catalog() -> None:
     global connection, musicbrainz_index_available, demo_profiles_available
-    connection = duckdb.connect(":memory:")
+    connection = duckdb.connect(
+        ":memory:",
+        config={
+            "threads": os.getenv("DUCKDB_THREADS", "4"),
+            "memory_limit": os.getenv("DUCKDB_MEMORY_LIMIT", "1GB"),
+        },
+    )
     for table in MUSIC_TABLES:
         parquet_path = DATA_DIR / f"{table}.parquet"
         if not parquet_path.is_file():

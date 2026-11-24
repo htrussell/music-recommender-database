@@ -1,4 +1,8 @@
+import os
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import duckdb
 from fastapi import HTTPException
@@ -62,6 +66,36 @@ class DuckDBCatalogToolTests(unittest.TestCase):
         duckdb_service.connection = self.previous_connection
         duckdb_service.musicbrainz_index_available = self.previous_musicbrainz_index_available
         duckdb_service.demo_profiles_available = self.previous_demo_profiles_available
+
+    def test_startup_resource_settings_keep_catalog_search_working(self) -> None:
+        original_connection = duckdb_service.connection
+        assert original_connection is not None
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            for table in duckdb_service.MUSIC_TABLES:
+                path = str(data_dir / f"{table}.parquet").replace("'", "''")
+                original_connection.execute(f"COPY {table} TO '{path}' (FORMAT PARQUET)")
+            try:
+                with (
+                    patch.object(duckdb_service, "DATA_DIR", data_dir),
+                    patch.object(duckdb_service, "MUSICBRAINZ_PARQUET", data_dir / "missing.parquet"),
+                    patch.object(duckdb_service, "DEMO_PROFILE_CSV", data_dir / "missing.csv"),
+                    patch.dict(os.environ, {"DUCKDB_THREADS": "2", "DUCKDB_MEMORY_LIMIT": "512MB"}),
+                ):
+                    duckdb_service.load_music_catalog()
+                loaded = duckdb_service.connection
+                assert loaded is not None
+                threads, memory_limit = loaded.execute(
+                    "SELECT current_setting('threads'), current_setting('memory_limit')"
+                ).fetchone()
+                self.assertEqual(threads, 2)
+                self.assertEqual(memory_limit, "488.2 MiB")
+                rows = duckdb_service.run_search_tracks({"query": "Blue"}, 10)
+                self.assertEqual({row["catalog_track_id"] for row in rows}, {"t1", "t2"})
+            finally:
+                if duckdb_service.connection is not original_connection:
+                    duckdb_service.connection.close()
+                duckdb_service.connection = original_connection
 
     def test_track_search_uses_bound_filters_and_applies_explicit_exclusion(self) -> None:
         response = duckdb_service.query_catalog(

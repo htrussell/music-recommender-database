@@ -15,5 +15,6 @@ ehthumbs.db
 [Dd]esktop.ini
 .vscode
 .venv/
+.env
 __pycache__/
 *.py[cod]

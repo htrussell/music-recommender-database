@@ -22,7 +22,7 @@ function loadApp() {
         },
         document: {
             getElementById(id) {
-                if (!elements.has(id)) elements.set(id, { value: "", checked: true, classList: { add() {}, remove() {} } });
+                if (!elements.has(id)) elements.set(id, { value: "", checked: true, scrollIntoView() {}, classList: { add() {}, remove() {} } });
                 return elements.get(id);
             }
         }
@@ -30,6 +30,67 @@ function loadApp() {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8"), context);
     return context;
 }
+
+test("YouTube preview embeds only validated results and escapes result labels", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        YOUTUBE_PREVIEW_QUEUE = [{ title: "Song", artist: "Artist" }];
+        fetch = async (url, options) => ({
+            ok: true,
+            json: async () => ({
+                candidates: [
+                    { video_id: "abcdefghijk", title: "<Song>", channel: "Artist" },
+                    { video_id: "bad-id", title: "Invalid", channel: "Artist" }
+                ],
+                suggested_video_id: "abcdefghijk",
+                warning: null
+            })
+        });
+        await openYouTubePreview(0);
+        return {
+            player: document.getElementById("youtubePreviewPlayer").innerHTML,
+            candidates: document.getElementById("youtubePreviewCandidates").innerHTML,
+            status: document.getElementById("youtubePreviewStatus").textContent
+        };
+    })()`, app);
+    assert.match(result.player, /youtube\.com\/embed\/abcdefghijk/);
+    assert.match(result.candidates, /&lt;Song&gt;/);
+    assert.doesNotMatch(result.candidates, /Invalid/);
+    assert.match(result.status, /Suggested match/);
+});
+
+test("closing YouTube preview ignores a pending search", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        YOUTUBE_PREVIEW_QUEUE = [{ title: "Song", artist: "Artist" }];
+        let finish;
+        fetch = () => new Promise(resolve => { finish = resolve; });
+        const pending = openYouTubePreview(0);
+        closeYouTubePreview();
+        finish({ ok: true, json: async () => ({
+            candidates: [{ video_id: "abcdefghijk", title: "Song", channel: "Artist" }],
+            suggested_video_id: "abcdefghijk"
+        }) });
+        await pending;
+        return document.getElementById("youtubePreviewPlayer").innerHTML;
+    })()`, app);
+    assert.equal(result, "");
+});
+
+test("YouTube preview reports missing configuration and keeps the search link", async () => {
+    const app = loadApp();
+    const result = await vm.runInContext(`(async () => {
+        YOUTUBE_PREVIEW_QUEUE = [{ title: "Song & More", artist: "Artist" }];
+        fetch = async () => ({ ok: false, json: async () => ({ detail: "YouTube previews require an API key." }) });
+        await openYouTubePreview(0);
+        return {
+            status: document.getElementById("youtubePreviewStatus").textContent,
+            link: document.getElementById("youtubePreviewSearchLink").href
+        };
+    })()`, app);
+    assert.match(result.status, /require an API key/);
+    assert.match(result.link, /Artist%20Song%20%26%20More/);
+});
 
 test("chat unwraps a JSON response without losing its suggestions", () => {
     const app = loadApp();
@@ -181,6 +242,7 @@ test("the rendered queue keeps only one exact title across artists", () => {
     })()`, app);
     assert.equal(result.ids, "db:1,db:4,db:6");
     assert.match(result.queue, /Jeff Buckley/);
+    assert.match(result.queue, /openYouTubePreview\(0\)/);
     assert.doesNotMatch(result.queue, /Rufus Wainwright/);
     assert.equal(result.duration, "12:00 / 20:00");
 });

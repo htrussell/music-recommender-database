@@ -108,6 +108,16 @@ Docker memory of 6-8 GB is recommended during the first full embedding build;
 CPU availability primarily determines build duration. The full build is not
 required to run the base demo.
 
+The catalog service defaults to four DuckDB threads and a 1 GB DuckDB memory
+limit to reduce host resource pressure. These are DuckDB settings, not hard
+limits on the container's total memory. Override `DUCKDB_THREADS` and
+`DUCKDB_MEMORY_LIMIT` in the root `.env` if needed.
+Large queries may spill to disk, run more slowly, or fail if the limit is too
+small. Other local applications and models also use host memory; close unneeded
+applications if the system is under memory pressure.
+After changing these settings, recreate the catalog service with
+`docker compose up --build -d duckdb`.
+
 The local Nomic model performs embedding work, while Cloudflare Workers AI
 provides text generation. The embedding build uses local Ollama CPU resources
 and does not consume Cloudflare model neurons.
@@ -128,6 +138,7 @@ The interactive launcher:
 
 - asks whether to download Kaggle sources, reuse existing CSVs, or reuse existing Parquet files
 - prompts for Kaggle username and a hidden API-key entry when credentials are missing
+- optionally prompts for a YouTube Data API key and saves it in the local `.env`
 - writes `~/.kaggle/kaggle.json` with user-only Unix permissions when needed
 - creates `.venv` and installs data-loading dependencies
 - transforms the catalog
@@ -137,6 +148,31 @@ The interactive launcher:
 
 Kaggle credentials may instead be supplied through `KAGGLE_USERNAME` and
 `KAGGLE_KEY`, or an existing `~/.kaggle/kaggle.json`. Do not commit credentials.
+
+#### Optional YouTube API key
+
+The key is optional. With it, queue items can search for embeddable YouTube
+videos and display a preview; without it, users can still follow the YouTube
+search link. Existing playlist imports do not need a key.
+
+To create a key, [create or select a Google Cloud project](https://console.cloud.google.com/),
+enable the YouTube Data API v3 in its API Library, then create an API key on
+the [Credentials page](https://console.cloud.google.com/apis/credentials).
+Restrict the key to the YouTube Data API v3.
+
+During interactive setup, choose to configure the optional key and enter it at
+the hidden prompt. For non-interactive setup, create `.env` in the repository
+root with `YOUTUBE_API_KEY=your-key`, or set `YOUTUBE_API_KEY` in the process
+environment. Docker Compose passes the key to the backend; an environment
+variable takes precedence over `.env`. Restart the demo after changing it.
+The `.env` file is Git-ignored, but contains a secret: do not share or commit it.
+
+Select **Play on YouTube** on a queue item to search on demand. The song and
+artist are sent to YouTube, and search results are sent to the configured
+Cloudflare Worker for a suggested match. Choose another result if the match is
+incorrect; playback is controlled by YouTube's embedded player. Videos may be
+unavailable or restricted, and YouTube API quota applies. No key is sent to
+the browser or the matching model.
 
 Automation examples:
 

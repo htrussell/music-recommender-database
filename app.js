@@ -1499,6 +1499,76 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
             }
         }
 
+        let YOUTUBE_PREVIEW_QUEUE = [];
+        let YOUTUBE_PREVIEW_CANDIDATES = [];
+        let YOUTUBE_PREVIEW_REQUEST = 0;
+
+        function closeYouTubePreview() {
+            YOUTUBE_PREVIEW_REQUEST++;
+            YOUTUBE_PREVIEW_CANDIDATES = [];
+            document.getElementById("youtubePreviewPlayer").innerHTML = "";
+            document.getElementById("youtubePreviewCandidates").innerHTML = "";
+            document.getElementById("youtubePreview").classList.add("hidden");
+        }
+
+        function selectYouTubePreview(index) {
+            const candidate = YOUTUBE_PREVIEW_CANDIDATES[index];
+            if (!candidate || !/^[A-Za-z0-9_-]{11}$/.test(candidate.video_id)) return;
+            document.getElementById("youtubePreviewPlayer").innerHTML =
+                `<iframe title="YouTube video player" src="https://www.youtube.com/embed/${candidate.video_id}" ` +
+                `style="width:100%; min-width:200px; min-height:200px; aspect-ratio:16 / 9" ` +
+                `allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
+        }
+
+        async function openYouTubePreview(index) {
+            const item = YOUTUBE_PREVIEW_QUEUE[index];
+            if (!item) return;
+            const requestId = ++YOUTUBE_PREVIEW_REQUEST;
+            const panel = document.getElementById("youtubePreview");
+            const status = document.getElementById("youtubePreviewStatus");
+            document.getElementById("youtubePreviewTitle").textContent = `YouTube preview: ${item.title} — ${item.artist}`;
+            document.getElementById("youtubePreviewSearchLink").href =
+                `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.artist} ${item.title}`)}`;
+            document.getElementById("youtubePreviewPlayer").innerHTML = "";
+            document.getElementById("youtubePreviewCandidates").innerHTML = "";
+            YOUTUBE_PREVIEW_CANDIDATES = [];
+            panel.classList.remove("hidden");
+            panel.scrollIntoView({ block: "nearest" });
+            status.textContent = "Searching YouTube…";
+            try {
+                const response = await fetch("/api/youtube/preview", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: item.title, artist: item.artist })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "YouTube search failed.");
+                if (!Array.isArray(data.candidates)) throw new Error("YouTube search returned an invalid response.");
+                if (requestId !== YOUTUBE_PREVIEW_REQUEST) return;
+                YOUTUBE_PREVIEW_CANDIDATES = data.candidates.filter(candidate =>
+                    candidate && typeof candidate.video_id === "string" &&
+                    /^[A-Za-z0-9_-]{11}$/.test(candidate.video_id) &&
+                    typeof candidate.title === "string" && typeof candidate.channel === "string"
+                );
+                const candidates = YOUTUBE_PREVIEW_CANDIDATES;
+                document.getElementById("youtubePreviewCandidates").innerHTML = candidates.map((candidate, candidateIndex) =>
+                    `<button type="button" onclick="selectYouTubePreview(${candidateIndex})" ` +
+                    `class="block w-full text-left text-xs text-blue-300 hover:text-white p-1">` +
+                    `${escapeHtml(candidate.title)} — ${escapeHtml(candidate.channel)}` +
+                    `${candidate.video_id === data.suggested_video_id ? " (suggested match)" : ""}</button>`
+                ).join("");
+                const selectedIndex = candidates.findIndex(candidate => candidate.video_id === data.suggested_video_id);
+                if (selectedIndex >= 0) selectYouTubePreview(selectedIndex);
+                status.textContent = data.warning || (candidates.length
+                    ? (selectedIndex >= 0 ? "Suggested match shown. Use the player to listen or choose another result." : "Choose a YouTube result to preview.")
+                    : "No embeddable YouTube results found.");
+            } catch (error) {
+                if (requestId === YOUTUBE_PREVIEW_REQUEST) {
+                    status.textContent = error.message || "YouTube search failed.";
+                }
+            }
+        }
+
         function renderResults(data, requestedBudget, partial = false, sampleArtist = null) {
             document.getElementById("emptyState").classList.add("hidden");
             document.getElementById("outputContent").classList.remove("hidden");
@@ -1550,6 +1620,7 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                 normalizeRecommendations(data.recommendations),
                 getRecommendationExclusions(getPreviouslyRecommendedIds(), sampleArtist)
             );
+            YOUTUBE_PREVIEW_QUEUE = recommendations.map(rec => CATALOG_ITEMS.find(item => item.id === rec.content_id));
             data.recommendations = recommendations;
             if (!partial) rememberRecommendedIds(recommendations);
 
@@ -1609,6 +1680,7 @@ Return only JSON: {"recommendations":[{"content_id":"EXACT_ID","reason":"brief g
                             <p class="text-xs text-slate-300 bg-slate-800/50 p-2 rounded border border-slate-800 text-[11px] leading-relaxed">
                                 <i class="fa-solid fa-quote-left text-[9px] text-blue-400 mr-1.5"></i>${escapeHtml(rec.reason)}
                             </p>
+                            ${YOUTUBE_PREVIEW_QUEUE[index] ? `<button type="button" onclick="openYouTubePreview(${index})" class="text-xs text-red-300 hover:text-white">Play on YouTube</button>` : ""}
                         </div>
                     `;
                 }).join("");

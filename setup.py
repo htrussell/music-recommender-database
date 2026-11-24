@@ -6,6 +6,7 @@ import getpass
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -154,6 +155,42 @@ def configure_kaggle_credentials(python: Path) -> None:
     if not key:
         raise SetupError("A Kaggle API key is required.")
     write_kaggle_credentials(username, key)
+
+
+def configure_youtube_api_key(non_interactive: bool) -> None:
+    if non_interactive:
+        return
+    if os.environ.get("YOUTUBE_API_KEY"):
+        print("YouTube API key found in the environment.")
+        return
+    if not prompt_yes_no("Configure an optional YouTube API key?", default=False):
+        return
+
+    print("Create a key: https://console.cloud.google.com/apis/credentials")
+    key = getpass.getpass("YouTube API key (input hidden): ").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        raise SetupError("The YouTube API key must be non-empty and contain only letters, digits, underscores, or hyphens.")
+
+    env_file = ROOT_DIR / ".env"
+    try:
+        if env_file.exists():
+            contents = env_file.read_text(encoding="utf-8")
+            lines = contents.splitlines(keepends=True)
+            lines = [
+                line for line in lines
+                if not re.match(r"^\s*(?:export\s+)?YOUTUBE_API_KEY\s*=", line)
+            ]
+            contents = "".join(lines)
+            if contents and not contents.endswith(("\n", "\r")):
+                contents += "\n"
+            env_file.write_text(contents + f"YOUTUBE_API_KEY={key}\n", encoding="utf-8")
+        else:
+            fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                file.write(f"YOUTUBE_API_KEY={key}\n")
+    except OSError as error:
+        raise SetupError(f"Could not save the YouTube API key to {env_file}.") from error
+    print(f"YouTube API key saved to {env_file}.")
 
 
 def source_choice(args: argparse.Namespace) -> str:
@@ -368,6 +405,7 @@ def main() -> int:
     args = parse_args()
     try:
         docker_available()
+        configure_youtube_api_key(args.non_interactive)
         python = create_venv()
 
         if args.skip_download:

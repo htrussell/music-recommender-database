@@ -24,6 +24,7 @@ services:
       CLOUDFLARE_RECOMMENDATION_MODEL: gemma
       CLOUDFLARE_CHAT_MODEL: granite
       CLOUDFLARE_SQL_MODEL: granite
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
       OLLAMA_URL: http://ollama:11434
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text:v1.5
       DUCKDB_URL: http://duckdb:8001
@@ -56,6 +57,8 @@ services:
       MUSIC_DATA_DIR: /data/transformed
       MUSICBRAINZ_PARQUET: /data/musicbrainz/recordings.parquet
       DEMO_PROFILE_CSV: /data/source/music_streaming_habits_2026.csv
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-1GB}
     volumes:
       - ./transformed:/data/transformed:ro
       - ./musicbrainz:/data/musicbrainz:ro
